@@ -14,6 +14,7 @@ import {
   deriveAssignedRole,
   formatStatus,
   getPipelineColumn,
+  roleCanHandleAction,
   syncWorkflowState
 } from "./workflow.js";
 import {
@@ -36,6 +37,7 @@ import {
 
 const app = express();
 const port = process.env.PORT || 4000;
+const isProduction = process.env.NODE_ENV === "production";
 
 function buildAllowedOrigins() {
   const configured = String(process.env.CORS_ORIGIN ?? "")
@@ -51,6 +53,8 @@ function buildAllowedOrigins() {
 }
 
 const allowedOrigins = buildAllowedOrigins();
+
+app.set("trust proxy", 1);
 
 app.use(cors({
   origin(origin, callback) {
@@ -71,8 +75,8 @@ app.use(session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: isProduction ? "none" : "lax",
+    secure: isProduction,
     maxAge: 1000 * 60 * 60 * 12
   }
 }));
@@ -157,7 +161,7 @@ function decorateVehicle(vehicle, usersById, timelineEntries, actionDefinitions,
 }
 
 function getQueueForRole(vehicle, role, actionDefinitions, userId = null) {
-  return buildActionList(vehicle, actionDefinitions, userId, role).some((action) => action.role === role);
+  return buildActionList(vehicle, actionDefinitions, userId, role).some((action) => roleCanHandleAction(action.key, role));
 }
 
 const statusOrder = {
