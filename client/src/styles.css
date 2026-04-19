@@ -261,6 +261,27 @@ select {
   background: rgba(29, 36, 48, 0.08);
 }
 
+.completion-banner,
+.completion-summary {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(10, 92, 82, 0.18);
+  background: linear-gradient(145deg, rgba(10, 92, 82, 0.12), rgba(255, 255, 255, 0.95));
+  margin-bottom: 10px;
+}
+
+.completion-banner strong {
+  font-size: 15px;
+}
+
+.completion-banner span,
+.completion-summary p {
+  color: var(--muted);
+  margin: 0;
+}
+
 .vehicle-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -418,11 +439,40 @@ select {
 .timeline,
 .calendar-list,
 .action-grid,
+.indicator-grid,
 .flag-editor,
 .admin-list,
 .audit-feed {
   display: grid;
   gap: 8px;
+}
+
+.indicator-grid {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  margin-top: 12px;
+}
+
+.indicator-chip {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 38px;
+  border-radius: 14px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  border: 1px solid var(--line);
+}
+
+.indicator-chip.complete {
+  background: rgba(10, 92, 82, 0.12);
+  color: var(--accent);
+  border-color: rgba(10, 92, 82, 0.24);
+}
+
+.indicator-chip.pending {
+  background: rgba(29, 36, 48, 0.06);
+  color: var(--muted);
 }
 
 .admin-card,

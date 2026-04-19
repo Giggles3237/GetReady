@@ -5,6 +5,7 @@ import { getPool } from "../src/db.js";
 const defaultPassword = "ChangeMe123!";
 
 const defaultEmails = new Map([
+  ["u-admin-1", "admin@dealership.local"],
   ["u-sales-1", "chris@dealership.local"],
   ["u-mgr-1", "morgan@dealership.local"],
   ["u-genius-1", "avery@dealership.local"],

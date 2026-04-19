@@ -39,6 +39,14 @@ const app = express();
 const port = process.env.PORT || 4000;
 const isProduction = process.env.NODE_ENV === "production";
 
+function isAdmin(user) {
+  return user?.role === "admin";
+}
+
+function hasManagerAccess(user) {
+  return ["admin", "manager"].includes(user?.role);
+}
+
 function buildAllowedOrigins() {
   const configured = String(process.env.CORS_ORIGIN ?? "")
     .split(",")
@@ -102,10 +110,10 @@ function inferLocation(vehicle) {
   if (vehicle.status === STATUS.SUBMITTED) return "Sales Lot";
   if (vehicle.status === STATUS.TO_DETAIL) return "Detail Queue";
   if (vehicle.status === STATUS.DETAIL_STARTED) return "Detail Bay";
-  if (vehicle.status === STATUS.DETAIL_FINISHED) return "Detail Complete";
-  if (vehicle.status === STATUS.REMOVED_FROM_DETAIL) return "Post Detail Staging";
+  if (vehicle.status === STATUS.DETAIL_FINISHED) return "Detail Complete - Awaiting Warehouse";
+  if (vehicle.status === STATUS.REMOVED_FROM_DETAIL) return "Warehouse";
   if (vehicle.status === STATUS.SERVICE) return "Service Drive";
-  if (vehicle.status === STATUS.QC) return "QC Lane";
+  if (vehicle.status === STATUS.QC) return "Warehouse QC";
   if (vehicle.status === STATUS.READY) return "Front Line";
   return vehicle.current_location ?? "Unknown";
 }
@@ -284,8 +292,22 @@ function requireManager(req, res, next) {
     return;
   }
 
-  if (req.currentUser.role !== "manager") {
+  if (!hasManagerAccess(req.currentUser)) {
     res.status(403).json({ message: "Manager access is required." });
+    return;
+  }
+
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.currentUser) {
+    res.status(401).json({ message: "Please sign in." });
+    return;
+  }
+
+  if (!isAdmin(req.currentUser)) {
+    res.status(403).json({ message: "Admin access is required." });
     return;
   }
 
@@ -379,7 +401,7 @@ app.get("/api/users", async (_req, res) => {
   res.json({ users });
 });
 
-app.post("/api/admin/users", requireManager, async (req, res) => {
+app.post("/api/admin/users", requireAdmin, async (req, res) => {
   const { name, email, role } = req.body;
 
   if (!name || !email || !role || !ROLE_LABELS[role]) {
@@ -430,7 +452,7 @@ app.post("/api/admin/users", requireManager, async (req, res) => {
   });
 });
 
-app.patch("/api/admin/users/:id", requireManager, async (req, res) => {
+app.patch("/api/admin/users/:id", requireAdmin, async (req, res) => {
   const { name, email, role, is_active } = req.body;
   const targetUser = await getUser(req.params.id);
 
@@ -506,7 +528,7 @@ app.patch("/api/admin/users/:id", requireManager, async (req, res) => {
   res.json({ user: sanitizeUser(await getUser(req.params.id)), users: (await listUsers()).map(sanitizeUser) });
 });
 
-app.post("/api/admin/users/:id/reset-password", requireManager, async (req, res) => {
+app.post("/api/admin/users/:id/reset-password", requireAdmin, async (req, res) => {
   const targetUser = await getUser(req.params.id);
 
   if (!targetUser) {
@@ -542,12 +564,12 @@ app.post("/api/admin/users/:id/reset-password", requireManager, async (req, res)
   res.json({ temporaryPassword });
 });
 
-app.get("/api/admin/actions", requireManager, async (_req, res) => {
+app.get("/api/admin/actions", requireAdmin, async (_req, res) => {
   const actions = (await listActionDefinitions()).map(normalizeActionDefinition);
   res.json({ actions });
 });
 
-app.patch("/api/admin/actions/:key", requireManager, async (req, res) => {
+app.patch("/api/admin/actions/:key", requireAdmin, async (req, res) => {
   const { label, role, enabled } = req.body;
   const actions = (await listActionDefinitions()).map(normalizeActionDefinition);
   const action = actions.find((item) => item.key === req.params.key);
@@ -608,7 +630,7 @@ app.patch("/api/admin/actions/:key", requireManager, async (req, res) => {
   res.json({ actions: (await listActionDefinitions()).map(normalizeActionDefinition) });
 });
 
-app.get("/api/admin/audit", requireManager, async (req, res) => {
+app.get("/api/admin/audit", requireAdmin, async (req, res) => {
   const { vehicleId, limit = 100 } = req.query;
   const [users, vehicles, entries] = await Promise.all([
     listUsers(),
@@ -626,7 +648,8 @@ app.get("/api/admin/audit", requireManager, async (req, res) => {
 
 app.get("/api/vehicles", async (req, res) => {
   const { search, view = "mine" } = req.query;
-  const role = typeof req.query.role === "string" && req.query.role !== "all" ? req.query.role : req.currentUser.role;
+  const requestedRole = typeof req.query.role === "string" && req.query.role !== "all" ? req.query.role : req.currentUser.role;
+  const role = requestedRole === "admin" ? "manager" : requestedRole;
   const includeAllSalespersonVehicles = role === "salesperson" && view === "all";
   const normalizedSearch = String(search ?? "").trim().toLowerCase();
   const [users, actionDefinitionsRaw, vehiclesRaw] = await Promise.all([
@@ -713,7 +736,7 @@ app.post("/api/vehicles", async (req, res) => {
 
   const users = await listUsers();
   const usersById = new Map(users.map((user) => [user.id, user]));
-  const submittedByUserId = req.currentUser.role === "manager" && submitted_by_user_id
+  const submittedByUserId = hasManagerAccess(req.currentUser) && submitted_by_user_id
     ? submitted_by_user_id
     : req.currentUser.id;
 
@@ -722,11 +745,11 @@ app.post("/api/vehicles", async (req, res) => {
     return res.status(400).json({ message: "The selected salesperson could not be found." });
   }
 
-  if (req.currentUser.role !== "manager" && submittedByUserId !== req.currentUser.id) {
+  if (!hasManagerAccess(req.currentUser) && submittedByUserId !== req.currentUser.id) {
     return res.status(403).json({ message: "Only a Manager can submit a get ready for another user." });
   }
 
-  const initialAssignedUserId = req.currentUser.role === "manager" && assigned_user_id ? assigned_user_id : null;
+  const initialAssignedUserId = hasManagerAccess(req.currentUser) && assigned_user_id ? assigned_user_id : null;
   if (initialAssignedUserId && !usersById.has(initialAssignedUserId)) {
     return res.status(400).json({ message: "The selected assigned user could not be found." });
   }
@@ -796,12 +819,12 @@ app.patch("/api/vehicles/:id/status", async (req, res) => {
 
   const vehicle = normalizeVehicle(vehicleRow);
 
-  if (status === STATUS.READY && !["salesperson", "manager"].includes(req.currentUser.role)) {
-    return res.status(403).json({ message: "Only Salespeople and Managers can mark a car completed." });
+  if (status === STATUS.READY && !["admin", "salesperson", "manager"].includes(req.currentUser.role)) {
+    return res.status(403).json({ message: "Only Salespeople, Managers, and Admins can mark a car completed." });
   }
 
-  if (isStatusUndo(vehicle.status, status) && req.currentUser.role !== "manager") {
-    return res.status(403).json({ message: "Only a Manager can undo a completed status step." });
+  if (isStatusUndo(vehicle.status, status) && !hasManagerAccess(req.currentUser)) {
+    return res.status(403).json({ message: "Only a Manager or Admin can undo a completed status step." });
   }
 
   const transition = canTransition(vehicle, status);
@@ -834,8 +857,8 @@ app.patch("/api/vehicles/:id/flags", async (req, res) => {
   const normalized = { ...req.body };
   const protectedUndoField = getProtectedUndoField(vehicle, normalized);
 
-  if (protectedUndoField && req.currentUser.role !== "manager") {
-    return res.status(403).json({ message: `Only a Manager can undo ${protectedUndoField.replaceAll("_", " ")} once it is complete.` });
+  if (protectedUndoField && !hasManagerAccess(req.currentUser)) {
+    return res.status(403).json({ message: `Only a Manager or Admin can undo ${protectedUndoField.replaceAll("_", " ")} once it is complete.` });
   }
 
   if (typeof normalized.needs_service === "boolean") {
@@ -876,7 +899,8 @@ app.patch("/api/vehicles/:id/flags", async (req, res) => {
 });
 
 app.get("/api/dashboard/summary", async (req, res) => {
-  const role = typeof req.query.role === "string" && req.query.role !== "all" ? req.query.role : req.currentUser.role;
+  const requestedRole = typeof req.query.role === "string" && req.query.role !== "all" ? req.query.role : req.currentUser.role;
+  const role = requestedRole === "admin" ? "manager" : requestedRole;
   const includeAllSalespersonVehicles = role === "salesperson" && req.query.view === "all";
   const [actionDefinitionsRaw, vehiclesRaw] = await Promise.all([listActionDefinitions(), listVehicles()]);
   const actionDefinitions = actionDefinitionsRaw.map(normalizeActionDefinition);

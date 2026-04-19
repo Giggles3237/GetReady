@@ -2,7 +2,7 @@ CREATE TABLE users (
   id VARCHAR(36) PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
   email VARCHAR(191) NOT NULL UNIQUE,
-  role ENUM('salesperson', 'manager', 'bmw_genius', 'detailer', 'service_advisor') NOT NULL,
+  role ENUM('admin', 'salesperson', 'manager', 'bmw_genius', 'detailer', 'service_advisor') NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -13,7 +13,7 @@ CREATE TABLE users (
 CREATE TABLE action_definitions (
   action_key VARCHAR(64) PRIMARY KEY,
   label VARCHAR(120) NOT NULL,
-  role ENUM('salesperson', 'manager', 'bmw_genius', 'detailer', 'service_advisor') NOT NULL,
+  role ENUM('admin', 'salesperson', 'manager', 'bmw_genius', 'detailer', 'service_advisor') NOT NULL,
   action_type ENUM('status', 'flag') NOT NULL,
   enabled BOOLEAN NOT NULL DEFAULT TRUE,
   sort_order INT NOT NULL DEFAULT 0,

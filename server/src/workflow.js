@@ -21,6 +21,7 @@ export const STATUS_META = {
 };
 
 export const ROLE_LABELS = {
+  admin: "Admin",
   salesperson: "Salesperson",
   manager: "Manager",
   bmw_genius: "BMW Genius",
@@ -32,7 +33,7 @@ export const DEFAULT_ACTION_DEFINITIONS = [
   { key: STATUS.TO_DETAIL, label: "Take Car To Detail", role: "bmw_genius", type: "status", enabled: true },
   { key: STATUS.DETAIL_STARTED, label: "Start Detail", role: "detailer", type: "status", enabled: true },
   { key: STATUS.DETAIL_FINISHED, label: "Finish Detail", role: "detailer", type: "status", enabled: true },
-  { key: STATUS.REMOVED_FROM_DETAIL, label: "Bring Car Up From Detail", role: "bmw_genius", type: "status", enabled: true },
+  { key: STATUS.REMOVED_FROM_DETAIL, label: "Remove From Detail", role: "bmw_genius", type: "status", enabled: true },
   { key: "complete_qc", label: "Complete QC", role: "manager", type: "flag", enabled: true },
   { key: "start_service", label: "Service Started", role: "service_advisor", type: "flag", enabled: true },
   { key: "complete_service", label: "Complete Service", role: "service_advisor", type: "flag", enabled: true },
@@ -50,7 +51,7 @@ function canRoleHandleAction(actionKey, role) {
   }
 
   if ([STATUS.TO_DETAIL, STATUS.REMOVED_FROM_DETAIL, "toggle_fueled"].includes(actionKey)) {
-    return ["salesperson", "manager", "bmw_genius"].includes(role);
+    return ["admin", "salesperson", "manager", "bmw_genius"].includes(role);
   }
 
   if ([STATUS.DETAIL_STARTED, STATUS.DETAIL_FINISHED].includes(actionKey)) {
@@ -58,15 +59,15 @@ function canRoleHandleAction(actionKey, role) {
   }
 
   if (["start_service", "complete_service", "start_bodywork", "complete_bodywork", "toggle_recall", "complete_recall"].includes(actionKey)) {
-    return ["service_advisor", "manager"].includes(role);
+    return ["admin", "service_advisor", "manager"].includes(role);
   }
 
   if (actionKey === "complete_qc") {
-    return role === "manager";
+    return ["admin", "manager"].includes(role);
   }
 
   if (actionKey === STATUS.READY) {
-    return ["salesperson", "manager"].includes(role);
+    return ["admin", "salesperson", "manager"].includes(role);
   }
 
   return false;
@@ -239,7 +240,10 @@ function isActionAvailable(vehicle, action, currentUserId = null, currentUserRol
   }
 
   if (action.key === "complete_qc") {
-    return vehicle.qc_required && !vehicle.qc_completed;
+    const removedFromDetail = [STATUS.REMOVED_FROM_DETAIL, STATUS.SERVICE, STATUS.QC, STATUS.READY].includes(vehicle.status);
+    const serviceDone = !vehicle.needs_service || vehicle.service_status === "completed";
+    const bodyDone = !vehicle.needs_bodywork || vehicle.bodywork_status === "completed";
+    return vehicle.qc_required && !vehicle.qc_completed && removedFromDetail && serviceDone && bodyDone;
   }
 
   if (action.key === "start_service") {

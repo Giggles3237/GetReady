@@ -7,6 +7,7 @@ const now = Date.now();
 const defaultPassword = "ChangeMe123!";
 
 const users = [
+  { id: "u-admin-1", name: "System Admin", email: "admin@dealership.local", role: "admin" },
   { id: "u-sales-1", name: "Chris Lasko", email: "chris@dealership.local", role: "salesperson" },
   { id: "u-mgr-1", name: "Morgan Tate", email: "morgan@dealership.local", role: "manager" },
   { id: "u-genius-1", name: "Avery Stone", email: "avery@dealership.local", role: "bmw_genius" },

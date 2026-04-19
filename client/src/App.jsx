@@ -4,6 +4,7 @@ const API_URL = (import.meta.env.VITE_API_URL || "/api").replace(/\/$/, "");
 const AUTO_REFRESH_INTERVAL_MS = 15000;
 
 const roleOptions = [
+  { value: "admin", label: "Admin" },
   { value: "salesperson", label: "Salesperson" },
   { value: "manager", label: "Manager" },
   { value: "bmw_genius", label: "BMW Genius" },
@@ -182,6 +183,42 @@ function getWorkflowBadges(vehicle) {
   return badges;
 }
 
+function getCompletionIndicators(vehicle) {
+  const indicators = [];
+
+  if (statusProgressOrder[vehicle.status] >= statusProgressOrder.detail_finished) {
+    indicators.push({ label: "Detailed", complete: true });
+  }
+
+  if (vehicle.fueled) {
+    indicators.push({ label: "Fueled", complete: true });
+  }
+
+  if (vehicle.needs_bodywork) {
+    if (vehicle.bodywork_status === "completed") {
+      indicators.push({ label: "Body Work Complete", complete: true });
+    }
+  }
+
+  if (vehicle.needs_service) {
+    if (vehicle.service_status === "completed") {
+      indicators.push({ label: "Service Complete", complete: true });
+    }
+  }
+
+  return indicators;
+}
+
+function getCompletionEntry(vehicle) {
+  if (vehicle.status !== "ready" || !vehicle.timeline) {
+    return null;
+  }
+
+  return [...vehicle.timeline]
+    .reverse()
+    .find((entry) => entry.field_changed === "status" && String(entry.new_value).toLowerCase() === "ready") ?? null;
+}
+
 function groupVehiclesByAction(vehicles, role) {
   const grouped = new Map();
 
@@ -302,6 +339,7 @@ export default function App() {
   const [showSubmissionModal, setShowSubmissionModal] = useState(false);
   const [search, setSearch] = useState("");
   const [salespersonView, setSalespersonView] = useState("mine");
+  const [showCompleted, setShowCompleted] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [adminActions, setAdminActions] = useState([]);
@@ -328,8 +366,10 @@ export default function App() {
   });
 
   const activeUser = authUser;
-  const role = authUser?.role ?? "manager";
-  const canAccessAdmin = role === "manager";
+  const role = authUser?.role ?? "salesperson";
+  const dashboardRole = role === "admin" ? "manager" : role;
+  const canAccessAdmin = role === "admin";
+  const hasManagerAccess = ["admin", "manager"].includes(role);
   const salespersonUsers = useMemo(() => users.filter((user) => user.role === "salesperson"), [users]);
   const assignableUsers = useMemo(() => users.filter((user) => user.is_active), [users]);
 
@@ -351,11 +391,11 @@ export default function App() {
 
     try {
       setError("");
-      const viewQuery = role === "salesperson" ? `&view=${salespersonView}` : "";
+      const viewQuery = dashboardRole === "salesperson" ? `&view=${salespersonView}` : "";
       const [userData, vehicleData, summaryData, calendarData] = await Promise.all([
         request("/users"),
-        request(`/vehicles?role=${role}&search=${encodeURIComponent(nextSearch)}${viewQuery}`),
-        request(`/dashboard/summary?role=${role}${viewQuery}`),
+        request(`/vehicles?role=${dashboardRole}&search=${encodeURIComponent(nextSearch)}${viewQuery}`),
+        request(`/dashboard/summary?role=${dashboardRole}${viewQuery}`),
         request("/dashboard/calendar")
       ]);
 
@@ -615,16 +655,21 @@ export default function App() {
     }
   }
 
+  const filteredForDisplay = useMemo(
+    () => showCompleted ? vehicles : vehicles.filter((vehicle) => vehicle.status !== "ready"),
+    [vehicles, showCompleted]
+  );
+
   const grouped = useMemo(() => {
     const map = Object.fromEntries(pipelineColumns.map((column) => [column, []]));
-    vehicles.forEach((vehicle) => {
+    filteredForDisplay.forEach((vehicle) => {
       map[vehicle.pipeline ?? "Submitted"].push(vehicle);
     });
     return map;
-  }, [vehicles]);
+  }, [filteredForDisplay]);
 
   const prioritizedVehicles = useMemo(() => {
-    return [...vehicles].sort((left, right) => {
+    return [...filteredForDisplay].sort((left, right) => {
       const leftAction = getNextActionForRole(left, role);
       const rightAction = getNextActionForRole(right, role);
 
@@ -645,7 +690,7 @@ export default function App() {
 
       return getDueSortValue(left) - getDueSortValue(right);
     });
-  }, [vehicles, role]);
+  }, [filteredForDisplay, role]);
 
   const nextUpVehicles = useMemo(() => prioritizedVehicles.filter((vehicle) => getNextActionForRole(vehicle, role)), [prioritizedVehicles, role]);
   const mySubmittedVehicles = useMemo(
@@ -653,8 +698,12 @@ export default function App() {
     [prioritizedVehicles, authUser]
   );
   const actionSections = useMemo(() => groupVehiclesByAction(nextUpVehicles, role), [nextUpVehicles, role]);
-  const roleSpecificActions = useMemo(() => selectedVehicle ? selectedVehicle.actions.filter((action) => action.role === role) : [], [selectedVehicle, role]);
-  const showSalespersonSubmissionSection = role === "salesperson" && salespersonView === "mine" && mySubmittedVehicles.length > 0;
+  const availableActions = useMemo(
+    () => selectedVehicle ? selectedVehicle.actions.filter((action) => action.role === role) : [],
+    [selectedVehicle, role]
+  );
+  const showSalespersonSubmissionSection = dashboardRole === "salesperson" && salespersonView === "mine" && mySubmittedVehicles.length > 0;
+  const completionEntry = useMemo(() => selectedVehicle ? getCompletionEntry(selectedVehicle) : null, [selectedVehicle]);
 
   if (!authReady) {
     return <div className="auth-shell"><section className="auth-card"><h1>Loading...</h1></section></div>;
@@ -719,7 +768,7 @@ export default function App() {
               setError("");
               setSubmission((current) => ({
                 ...current,
-                submitted_by_user_id: role === "manager" ? (current.submitted_by_user_id || authUser.id) : authUser.id
+                submitted_by_user_id: hasManagerAccess ? (current.submitted_by_user_id || authUser.id) : authUser.id
               }));
               setShowSubmissionModal(true);
             }}
@@ -759,7 +808,7 @@ export default function App() {
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">Role Dashboard</p>
-                  <h2>{roleOptions.find((option) => option.value === role)?.label} Next Actions</h2>
+                  <h2>{roleOptions.find((option) => option.value === dashboardRole)?.label} Next Actions</h2>
                 </div>
                 <span className="pill">{authUser.name}</span>
               </div>
@@ -774,6 +823,15 @@ export default function App() {
                   </button>
                 </div>
               ) : null}
+
+              <div className="view-toggle">
+                <button type="button" className={`tab-btn ${!showCompleted ? "active" : ""}`} onClick={() => setShowCompleted(false)}>
+                  Active Only
+                </button>
+                <button type="button" className={`tab-btn ${showCompleted ? "active" : ""}`} onClick={() => setShowCompleted(true)}>
+                  {dashboardRole === "salesperson" && salespersonView === "mine" ? "Show My Completed" : "Show Completed"}
+                </button>
+              </div>
 
               {error ? <div className="error-banner">{error}</div> : null}
               {successMessage ? <div className="success-banner">{successMessage}</div> : null}
@@ -845,7 +903,7 @@ export default function App() {
               ) : null}
             </section>
 
-            {role === "manager" ? (
+            {hasManagerAccess ? (
               <section className="panel manager-panel">
                 <div className="section-heading">
                   <div>
@@ -1030,7 +1088,7 @@ export default function App() {
             <form className="control-card modal-form" onSubmit={createVehicle}>
               <label>
                 Salesperson
-                {role === "manager" ? (
+                {hasManagerAccess ? (
                   <select
                     value={submission.submitted_by_user_id || authUser.id}
                     onChange={(event) => setSubmission((current) => ({ ...current, submitted_by_user_id: event.target.value }))}
@@ -1044,7 +1102,7 @@ export default function App() {
                 )}
               </label>
 
-              {role === "manager" ? (
+              {hasManagerAccess ? (
                 <label>
                   Assigned User
                   <select
@@ -1118,6 +1176,16 @@ export default function App() {
             </div>
 
             <div className="detail-card">
+              {selectedVehicle.status === "ready" ? (
+                <div className="completion-banner">
+                  <strong>Front Line Ready</strong>
+                  <span>
+                    {completionEntry
+                      ? `Completed by ${completionEntry.user?.name ?? "Unknown User"} on ${fmtDate(completionEntry.created_at)}`
+                      : "This unit has been marked complete."}
+                  </span>
+                </div>
+              ) : null}
               <p><strong>Status:</strong> {formatFieldLabel(selectedVehicle.status)}</p>
               <p><strong>Location:</strong> {selectedVehicle.current_location}</p>
               <p><strong>Due:</strong> {fmtDate(selectedVehicle.due_date)}</p>
@@ -1126,22 +1194,38 @@ export default function App() {
               {selectedVehicle.needs_service ? <p><strong>{getServiceDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.service_notes || "No service notes"}</p> : null}
               {selectedVehicle.needs_bodywork ? <p><strong>{getBodyworkDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.bodywork_notes || "No body work notes"}</p> : null}
               {selectedVehicle.blockers.length > 0 ? <p><strong>Blocking Issues:</strong> {selectedVehicle.blockers.join(" ")}</p> : null}
+              {getCompletionIndicators(selectedVehicle).length > 0 ? (
+                <div className="indicator-grid">
+                  {getCompletionIndicators(selectedVehicle).map((indicator) => (
+                    <span key={indicator.label} className="indicator-chip complete">
+                      {indicator.label}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div className="detail-card">
-              <h3>Your Next Step</h3>
-              <div className="action-grid">
-                {roleSpecificActions.length > 0 ? roleSpecificActions.map((action) => (
-                  <button
-                    type="button"
-                    key={action.key}
-                    className="next-step-btn"
-                    onClick={() => performAction(selectedVehicle.id, action.key, updateStatus, updateFlags)}
-                  >
-                    {action.label}
-                  </button>
-                )) : <p className="step-helper">No action is waiting on your role right now.</p>}
-              </div>
+              <h3>{selectedVehicle.status === "ready" ? "Completion Summary" : "Available Actions"}</h3>
+              {selectedVehicle.status === "ready" ? (
+                <div className="completion-summary">
+                  <p><strong>Completed By:</strong> {completionEntry?.user?.name ?? "Unknown User"}</p>
+                  <p><strong>Completed At:</strong> {completionEntry ? fmtDate(completionEntry.created_at) : "Unknown"}</p>
+                </div>
+              ) : (
+                <div className="action-grid">
+                  {availableActions.length > 0 ? availableActions.map((action) => (
+                    <button
+                      type="button"
+                      key={action.key}
+                      className="next-step-btn"
+                      onClick={() => performAction(selectedVehicle.id, action.key, updateStatus, updateFlags)}
+                    >
+                      {action.label}
+                    </button>
+                  )) : <p className="step-helper">No actions are available right now.</p>}
+                </div>
+              )}
             </div>
 
             <div className="detail-card">
