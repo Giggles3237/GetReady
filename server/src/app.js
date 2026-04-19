@@ -1,7 +1,9 @@
-import express from "express";
+import "dotenv/config";
+import bcrypt from "bcryptjs";
 import cors from "cors";
+import express from "express";
+import session from "express-session";
 import { v4 as uuid } from "uuid";
-import { actionDefinitions, auditLogs, hydrateVehicle, users, vehicles } from "./data/seed.js";
 import {
   ROLE_LABELS,
   STATUS,
@@ -10,40 +12,86 @@ import {
   canTransition,
   computeBlockingIssues,
   deriveAssignedRole,
-  getPipelineColumn,
   formatStatus,
+  getPipelineColumn,
   syncWorkflowState
 } from "./workflow.js";
+import {
+  getPool,
+  listActionDefinitions,
+  listUsers,
+  getUser,
+  getUserByEmail,
+  getVehicle,
+  listVehicles,
+  listAuditEntries,
+  updateActionDefinition,
+  createUser,
+  updateUser,
+  updateUserPassword,
+  insertVehicle,
+  replaceVehicle,
+  insertAuditLog
+} from "./db.js";
 
 const app = express();
 const port = process.env.PORT || 4000;
 
-app.use(cors());
+function buildAllowedOrigins() {
+  const configured = String(process.env.CORS_ORIGIN ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (configured.length > 0) {
+    return configured;
+  }
+
+  return ["http://localhost:5173", "http://127.0.0.1:5173"];
+}
+
+const allowedOrigins = buildAllowedOrigins();
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error("Origin not allowed by CORS."));
+  },
+  credentials: true
+}));
 app.use(express.json());
+app.use(session({
+  name: "getready.sid",
+  secret: process.env.SESSION_SECRET || "change-me-in-production",
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 1000 * 60 * 60 * 12
+  }
+}));
 
-function getUser(userId) {
-  return users.find((user) => user.id === userId);
-}
+function sanitizeUser(user) {
+  if (!user) {
+    return null;
+  }
 
-function isManagerUser(userId) {
-  return getUser(userId)?.role === "manager";
-}
-
-function getVehicle(vehicleId) {
-  return vehicles.find((vehicle) => vehicle.id === vehicleId);
-}
-
-function addAuditEntry({ vehicleId, userId, actionType, fieldChanged, oldValue, newValue }) {
-  auditLogs.unshift({
-    id: uuid(),
-    vehicle_id: vehicleId,
-    user_id: userId,
-    action_type: actionType,
-    field_changed: fieldChanged,
-    old_value: String(oldValue ?? ""),
-    new_value: String(newValue ?? ""),
-    created_at: new Date().toISOString()
-  });
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    must_change_password: Boolean(user.must_change_password),
+    is_active: Boolean(user.is_active),
+    created_at: user.created_at,
+    updated_at: user.updated_at
+  };
 }
 
 function inferLocation(vehicle) {
@@ -58,74 +106,58 @@ function inferLocation(vehicle) {
   return vehicle.current_location ?? "Unknown";
 }
 
-function updateVehicle(vehicle, changes, userId, actionType = "field_update") {
-  Object.entries(changes).forEach(([field, newValue]) => {
-    const oldValue = vehicle[field];
-    if (oldValue !== newValue) {
-      addAuditEntry({
-        vehicleId: vehicle.id,
-        userId,
-        actionType,
-        fieldChanged: field,
-        oldValue,
-        newValue
-      });
-      vehicle[field] = newValue;
-    }
-  });
-  syncWorkflowState(vehicle);
-  vehicle.current_location = inferLocation(vehicle);
-  vehicle.assigned_role = deriveAssignedRole(vehicle);
-  vehicle.updated_at = new Date().toISOString();
-  vehicle.actions = buildActionList(vehicle, actionDefinitions);
-}
-
-function decorateVehicle(vehicle) {
-  const hydrated = hydrateVehicle(vehicle, actionDefinitions);
+function normalizeVehicle(row) {
   return {
-    ...hydrated,
-    pipeline: getPipelineColumn(hydrated),
-    blockers: computeBlockingIssues(hydrated),
-    assigned_user: users.find((user) => user.id === hydrated.assigned_user_id) ?? null,
-    submitted_by: users.find((user) => user.id === hydrated.submitted_by_user_id) ?? null,
-    timeline: auditLogs
-      .filter((entry) => entry.vehicle_id === hydrated.id)
-      .map((entry) => ({
-        ...entry,
-        user: users.find((user) => user.id === entry.user_id) ?? null
-      }))
+    ...row,
+    year: Number(row.year),
+    needs_service: Boolean(row.needs_service),
+    needs_bodywork: Boolean(row.needs_bodywork),
+    recall_checked: Boolean(row.recall_checked),
+    recall_open: Boolean(row.recall_open),
+    recall_completed: Boolean(row.recall_completed),
+    fueled: Boolean(row.fueled),
+    qc_required: Boolean(row.qc_required),
+    qc_completed: Boolean(row.qc_completed)
   };
 }
 
-function decorateVehicleForUser(vehicle, userId = null) {
-  const hydrated = hydrateVehicle(vehicle, actionDefinitions, userId);
+function normalizeActionDefinition(row) {
   return {
-    ...hydrated,
-    pipeline: getPipelineColumn(hydrated),
-    blockers: computeBlockingIssues(hydrated),
-    assigned_user: users.find((user) => user.id === hydrated.assigned_user_id) ?? null,
-    submitted_by: users.find((user) => user.id === hydrated.submitted_by_user_id) ?? null,
-    timeline: auditLogs
-      .filter((entry) => entry.vehicle_id === hydrated.id)
-      .map((entry) => ({
-        ...entry,
-        user: users.find((user) => user.id === entry.user_id) ?? null
-      }))
+    key: row.action_key,
+    label: row.label,
+    role: row.role,
+    type: row.action_type,
+    enabled: Boolean(row.enabled),
+    sort_order: Number(row.sort_order)
   };
 }
 
-function getQueueForRole(vehicle, role, userId = null) {
-  const actions = buildActionList(vehicle, actionDefinitions, userId);
-  return actions.some((action) => action.role === role);
-}
-
-function decorateAuditEntry(entry) {
+function decorateAuditEntry(entry, usersById, vehiclesById) {
   return {
     ...entry,
-    user: users.find((user) => user.id === entry.user_id) ?? null,
-    vehicle: vehicles.find((vehicle) => vehicle.id === entry.vehicle_id) ?? null,
+    user: usersById.get(entry.user_id) ?? null,
+    vehicle: entry.vehicle_id ? vehiclesById.get(entry.vehicle_id) ?? null : null,
     scope: entry.vehicle_id ? "vehicle" : "system"
   };
+}
+
+function decorateVehicle(vehicle, usersById, timelineEntries, actionDefinitions, currentUserId = null) {
+  const currentUserRole = currentUserId ? usersById.get(currentUserId)?.role ?? null : null;
+  const actions = buildActionList(vehicle, actionDefinitions, currentUserId, currentUserRole);
+  return {
+    ...vehicle,
+    assigned_role: deriveAssignedRole(vehicle),
+    actions,
+    pipeline: getPipelineColumn(vehicle),
+    blockers: computeBlockingIssues(vehicle),
+    assigned_user: vehicle.assigned_user_id ? usersById.get(vehicle.assigned_user_id) ?? null : null,
+    submitted_by: vehicle.submitted_by_user_id ? usersById.get(vehicle.submitted_by_user_id) ?? null : null,
+    timeline: timelineEntries
+  };
+}
+
+function getQueueForRole(vehicle, role, actionDefinitions, userId = null) {
+  return buildActionList(vehicle, actionDefinitions, userId, role).some((action) => action.role === role);
 }
 
 const statusOrder = {
@@ -157,167 +189,467 @@ function getProtectedUndoField(vehicle, changes) {
   return checks.find((item) => item.blocked)?.field ?? null;
 }
 
-app.get("/api/health", (_req, res) => {
+function generateTemporaryPassword() {
+  return `Temp${Math.random().toString(36).slice(2, 8)}!9`;
+}
+
+async function addAuditEntry(connection, { vehicleId = null, userId, actionType, fieldChanged, oldValue, newValue }) {
+  await insertAuditLog(connection, {
+    id: uuid(),
+    vehicle_id: vehicleId || null,
+    user_id: userId,
+    action_type: actionType,
+    field_changed: fieldChanged,
+    old_value: oldValue == null ? null : String(oldValue),
+    new_value: newValue == null ? null : String(newValue)
+  });
+}
+
+async function updateVehicleWithAudit(vehicleId, changes, userId, actionType) {
+  const pool = getPool();
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    const currentVehicle = normalizeVehicle(await getVehicle(vehicleId, connection));
+
+    if (!currentVehicle) {
+      throw Object.assign(new Error("Vehicle not found."), { statusCode: 404 });
+    }
+
+    for (const [field, newValue] of Object.entries(changes)) {
+      const oldValue = currentVehicle[field];
+      if (String(oldValue ?? "") !== String(newValue ?? "")) {
+        await addAuditEntry(connection, {
+          vehicleId: currentVehicle.id,
+          userId,
+          actionType,
+          fieldChanged: field,
+          oldValue,
+          newValue
+        });
+      }
+    }
+
+    Object.assign(currentVehicle, changes);
+    syncWorkflowState(currentVehicle);
+    currentVehicle.current_location = inferLocation(currentVehicle);
+    currentVehicle.assigned_role = deriveAssignedRole(currentVehicle);
+    currentVehicle.updated_at = new Date().toISOString();
+
+    await replaceVehicle(connection, currentVehicle);
+    await connection.commit();
+
+    return currentVehicle;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+}
+
+async function loadSessionUser(req, _res, next) {
+  if (!req.session?.userId) {
+    req.currentUser = null;
+    next();
+    return;
+  }
+
+  req.currentUser = sanitizeUser(await getUser(req.session.userId));
+  if (!req.currentUser || !req.currentUser.is_active) {
+    req.session.destroy(() => {});
+    req.currentUser = null;
+  }
+
+  next();
+}
+
+function requireAuth(req, res, next) {
+  if (!req.currentUser) {
+    res.status(401).json({ message: "Please sign in." });
+    return;
+  }
+
+  next();
+}
+
+function requireManager(req, res, next) {
+  if (!req.currentUser) {
+    res.status(401).json({ message: "Please sign in." });
+    return;
+  }
+
+  if (req.currentUser.role !== "manager") {
+    res.status(403).json({ message: "Manager access is required." });
+    return;
+  }
+
+  next();
+}
+
+app.use(loadSessionUser);
+
+app.get("/api/health", async (_req, res) => {
+  await getPool().query("SELECT 1");
   res.json({ ok: true, service: "get-ready-api" });
 });
 
-app.get("/api/users", (_req, res) => {
+app.post("/api/auth/login", async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: "Email and password are required." });
+  }
+
+  const user = await getUserByEmail(email);
+  if (!user || !user.password_hash || !user.is_active) {
+    return res.status(401).json({ message: "Invalid email or password." });
+  }
+
+  const validPassword = await bcrypt.compare(password, user.password_hash);
+  if (!validPassword) {
+    return res.status(401).json({ message: "Invalid email or password." });
+  }
+
+  req.session.userId = user.id;
+  res.json({ user: sanitizeUser(user) });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  req.session.destroy(() => {
+    res.json({ ok: true });
+  });
+});
+
+app.get("/api/auth/me", (req, res) => {
+  res.json({ user: req.currentUser });
+});
+
+app.patch("/api/auth/change-password", requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword || String(newPassword).length < 8) {
+    return res.status(400).json({ message: "Current password and a new password of at least 8 characters are required." });
+  }
+
+  const authUser = await getUserByEmail(req.currentUser.email);
+  const validPassword = authUser?.password_hash ? await bcrypt.compare(currentPassword, authUser.password_hash) : false;
+
+  if (!validPassword) {
+    return res.status(401).json({ message: "Current password is incorrect." });
+  }
+
+  const pool = getPool();
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    await updateUserPassword(connection, {
+      id: req.currentUser.id,
+      password_hash: await bcrypt.hash(newPassword, 10),
+      must_change_password: false
+    });
+    await addAuditEntry(connection, {
+      userId: req.currentUser.id,
+      actionType: "password_change",
+      fieldChanged: `user:${req.currentUser.id}:password`,
+      oldValue: "",
+      newValue: "updated"
+    });
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  res.json({ user: sanitizeUser(await getUser(req.currentUser.id)) });
+});
+
+app.use("/api", requireAuth);
+
+app.get("/api/users", async (_req, res) => {
+  const users = (await listUsers()).map(sanitizeUser);
   res.json({ users });
 });
 
-app.post("/api/admin/users", (req, res) => {
-  const { name, role, userId } = req.body;
+app.post("/api/admin/users", requireManager, async (req, res) => {
+  const { name, email, role } = req.body;
 
-  if (!userId || !getUser(userId) || !isManagerUser(userId)) {
-    return res.status(403).json({ message: "Only a Manager can administer users." });
+  if (!name || !email || !role || !ROLE_LABELS[role]) {
+    return res.status(400).json({ message: "Name, email, and valid role are required." });
   }
 
-  if (!name || !role || !ROLE_LABELS[role]) {
-    return res.status(400).json({ message: "Name and valid role are required." });
+  const existingUser = await getUserByEmail(email);
+  if (existingUser) {
+    return res.status(409).json({ message: "That email is already in use." });
   }
 
+  const temporaryPassword = generateTemporaryPassword();
   const newUser = {
     id: uuid(),
     name: String(name).trim(),
-    role
+    email: String(email).trim().toLowerCase(),
+    role,
+    password_hash: await bcrypt.hash(temporaryPassword, 10),
+    must_change_password: true,
+    is_active: true
   };
 
-  users.push(newUser);
-  addAuditEntry({
-    vehicleId: "",
-    userId,
-    actionType: "admin_user_create",
-    fieldChanged: `user:${newUser.id}:created`,
-    oldValue: "",
-    newValue: `${newUser.name} (${newUser.role})`
-  });
+  const pool = getPool();
+  const connection = await pool.getConnection();
 
-  res.status(201).json({ user: newUser, users });
+  try {
+    await connection.beginTransaction();
+    await createUser(connection, newUser);
+    await addAuditEntry(connection, {
+      userId: req.currentUser.id,
+      actionType: "admin_user_create",
+      fieldChanged: `user:${newUser.id}:created`,
+      oldValue: "",
+      newValue: `${newUser.name} (${newUser.role})`
+    });
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  res.status(201).json({
+    user: sanitizeUser(await getUser(newUser.id)),
+    temporaryPassword,
+    users: (await listUsers()).map(sanitizeUser)
+  });
 });
 
-app.patch("/api/admin/users/:id", (req, res) => {
-  const { name, role, userId } = req.body;
-  const targetUser = getUser(req.params.id);
-
-  if (!userId || !getUser(userId) || !isManagerUser(userId)) {
-    return res.status(403).json({ message: "Only a Manager can administer users." });
-  }
+app.patch("/api/admin/users/:id", requireManager, async (req, res) => {
+  const { name, email, role, is_active } = req.body;
+  const targetUser = await getUser(req.params.id);
 
   if (!targetUser) {
     return res.status(404).json({ message: "User not found." });
   }
 
-  if (typeof name === "string" && name.trim() && targetUser.name !== name.trim()) {
-    addAuditEntry({
-      vehicleId: "",
-      userId,
-      actionType: "admin_user_update",
-      fieldChanged: `user:${targetUser.id}:name`,
-      oldValue: targetUser.name,
-      newValue: name.trim()
-    });
-    targetUser.name = name.trim();
+  const pool = getPool();
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    const nextUser = { ...targetUser };
+
+    if (typeof name === "string" && name.trim() && targetUser.name !== name.trim()) {
+      await addAuditEntry(connection, {
+        userId: req.currentUser.id,
+        actionType: "admin_user_update",
+        fieldChanged: `user:${targetUser.id}:name`,
+        oldValue: targetUser.name,
+        newValue: name.trim()
+      });
+      nextUser.name = name.trim();
+    }
+
+    if (typeof email === "string" && email.trim() && targetUser.email !== email.trim().toLowerCase()) {
+      const existingUser = await getUserByEmail(email, connection);
+      if (existingUser && existingUser.id !== targetUser.id) {
+        throw Object.assign(new Error("That email is already in use."), { statusCode: 409 });
+      }
+
+      await addAuditEntry(connection, {
+        userId: req.currentUser.id,
+        actionType: "admin_user_update",
+        fieldChanged: `user:${targetUser.id}:email`,
+        oldValue: targetUser.email,
+        newValue: email.trim().toLowerCase()
+      });
+      nextUser.email = email.trim().toLowerCase();
+    }
+
+    if (typeof role === "string" && ROLE_LABELS[role] && targetUser.role !== role) {
+      await addAuditEntry(connection, {
+        userId: req.currentUser.id,
+        actionType: "admin_user_update",
+        fieldChanged: `user:${targetUser.id}:role`,
+        oldValue: targetUser.role,
+        newValue: role
+      });
+      nextUser.role = role;
+    }
+
+    if (typeof is_active === "boolean" && Boolean(targetUser.is_active) !== is_active) {
+      await addAuditEntry(connection, {
+        userId: req.currentUser.id,
+        actionType: "admin_user_update",
+        fieldChanged: `user:${targetUser.id}:is_active`,
+        oldValue: targetUser.is_active,
+        newValue: is_active
+      });
+      nextUser.is_active = is_active;
+    }
+
+    await updateUser(connection, nextUser);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
   }
 
-  if (typeof role === "string" && ROLE_LABELS[role] && targetUser.role !== role) {
-    addAuditEntry({
-      vehicleId: "",
-      userId,
-      actionType: "admin_user_update",
-      fieldChanged: `user:${targetUser.id}:role`,
-      oldValue: targetUser.role,
-      newValue: role
-    });
-    targetUser.role = role;
+  res.json({ user: sanitizeUser(await getUser(req.params.id)), users: (await listUsers()).map(sanitizeUser) });
+});
+
+app.post("/api/admin/users/:id/reset-password", requireManager, async (req, res) => {
+  const targetUser = await getUser(req.params.id);
+
+  if (!targetUser) {
+    return res.status(404).json({ message: "User not found." });
   }
 
-  res.json({ user: targetUser, users });
+  const temporaryPassword = generateTemporaryPassword();
+  const pool = getPool();
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    await updateUserPassword(connection, {
+      id: targetUser.id,
+      password_hash: await bcrypt.hash(temporaryPassword, 10),
+      must_change_password: true
+    });
+    await addAuditEntry(connection, {
+      userId: req.currentUser.id,
+      actionType: "admin_password_reset",
+      fieldChanged: `user:${targetUser.id}:password_reset`,
+      oldValue: "",
+      newValue: "temporary password issued"
+    });
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  res.json({ temporaryPassword });
 });
 
-app.get("/api/admin/actions", (_req, res) => {
-  res.json({ actions: actionDefinitions });
+app.get("/api/admin/actions", requireManager, async (_req, res) => {
+  const actions = (await listActionDefinitions()).map(normalizeActionDefinition);
+  res.json({ actions });
 });
 
-app.patch("/api/admin/actions/:key", (req, res) => {
-  const { userId, label, role, enabled } = req.body;
-  const action = actionDefinitions.find((item) => item.key === req.params.key);
+app.patch("/api/admin/actions/:key", requireManager, async (req, res) => {
+  const { label, role, enabled } = req.body;
+  const actions = (await listActionDefinitions()).map(normalizeActionDefinition);
+  const action = actions.find((item) => item.key === req.params.key);
 
   if (!action) {
     return res.status(404).json({ message: "Action not found." });
   }
 
-  if (!userId || !getUser(userId)) {
-    return res.status(400).json({ message: "A valid user is required." });
-  }
+  const pool = getPool();
+  const connection = await pool.getConnection();
 
-  const changes = {};
-  if (typeof label === "string" && label.trim()) {
-    changes.label = label.trim();
-  }
-  if (typeof role === "string" && ROLE_LABELS[role]) {
-    changes.role = role;
-  }
-  if (typeof enabled === "boolean") {
-    changes.enabled = enabled;
-  }
+  try {
+    await connection.beginTransaction();
+    const nextAction = { ...action };
 
-  Object.entries(changes).forEach(([field, newValue]) => {
-    const oldValue = action[field];
-    if (oldValue !== newValue) {
-      addAuditEntry({
-        vehicleId: "",
-        userId,
+    if (typeof label === "string" && label.trim() && nextAction.label !== label.trim()) {
+      await addAuditEntry(connection, {
+        userId: req.currentUser.id,
         actionType: "admin_action_update",
-        fieldChanged: `action:${action.key}:${field}`,
-        oldValue,
-        newValue
+        fieldChanged: `action:${action.key}:label`,
+        oldValue: nextAction.label,
+        newValue: label.trim()
       });
-      action[field] = newValue;
+      nextAction.label = label.trim();
     }
+
+    if (typeof role === "string" && ROLE_LABELS[role] && nextAction.role !== role) {
+      await addAuditEntry(connection, {
+        userId: req.currentUser.id,
+        actionType: "admin_action_update",
+        fieldChanged: `action:${action.key}:role`,
+        oldValue: nextAction.role,
+        newValue: role
+      });
+      nextAction.role = role;
+    }
+
+    if (typeof enabled === "boolean" && nextAction.enabled !== enabled) {
+      await addAuditEntry(connection, {
+        userId: req.currentUser.id,
+        actionType: "admin_action_update",
+        fieldChanged: `action:${action.key}:enabled`,
+        oldValue: nextAction.enabled,
+        newValue: enabled
+      });
+      nextAction.enabled = enabled;
+    }
+
+    await updateActionDefinition(connection, nextAction);
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  res.json({ actions: (await listActionDefinitions()).map(normalizeActionDefinition) });
+});
+
+app.get("/api/admin/audit", requireManager, async (req, res) => {
+  const { vehicleId, limit = 100 } = req.query;
+  const [users, vehicles, entries] = await Promise.all([
+    listUsers(),
+    listVehicles(),
+    listAuditEntries({ vehicleId, limit: Number(limit) })
+  ]);
+
+  const usersById = new Map(users.map((user) => [user.id, sanitizeUser(user)]));
+  const vehiclesById = new Map(vehicles.map((vehicle) => [vehicle.id, normalizeVehicle(vehicle)]));
+
+  res.json({
+    audit: entries.map((entry) => decorateAuditEntry(entry, usersById, vehiclesById))
   });
-
-  res.json({ action, actions: actionDefinitions });
 });
 
-app.get("/api/admin/audit", (req, res) => {
-  const { userId, vehicleId, limit = 100 } = req.query;
-
-  let entries = auditLogs.map(decorateAuditEntry);
-
-  if (userId) {
-    entries = entries.filter((entry) => entry.user_id === userId);
-  }
-
-  if (vehicleId) {
-    entries = entries.filter((entry) => entry.vehicle_id === vehicleId);
-  }
-
-  res.json({ audit: entries.slice(0, Number(limit)) });
-});
-
-app.get("/api/vehicles", (req, res) => {
-  const { role, userId, search } = req.query;
+app.get("/api/vehicles", async (req, res) => {
+  const { search, view = "mine" } = req.query;
+  const role = typeof req.query.role === "string" && req.query.role !== "all" ? req.query.role : req.currentUser.role;
+  const includeAllSalespersonVehicles = role === "salesperson" && view === "all";
   const normalizedSearch = String(search ?? "").trim().toLowerCase();
+  const [users, actionDefinitionsRaw, vehiclesRaw] = await Promise.all([
+    listUsers(),
+    listActionDefinitions(),
+    listVehicles()
+  ]);
 
-  let filtered = vehicles.map((vehicle) => decorateVehicleForUser(vehicle, userId ? String(userId) : null));
+  const usersById = new Map(users.map((user) => [user.id, sanitizeUser(user)]));
+  const actionDefinitions = actionDefinitionsRaw.map(normalizeActionDefinition);
+  const filteredRows = vehiclesRaw.map(normalizeVehicle);
+  const decorated = filteredRows.map((vehicle) => decorateVehicle(vehicle, usersById, [], actionDefinitions, req.currentUser.id));
 
-  if (role && role !== "all") {
-    filtered = filtered.filter((vehicle) => getQueueForRole(vehicle, role, userId ? String(userId) : null) || vehicle.assigned_role === role && (role !== "detailer" || vehicle.status !== STATUS.DETAIL_STARTED || vehicle.assigned_user_id === userId));
-  }
+  let filtered = decorated.filter((vehicle) =>
+    getQueueForRole(vehicle, role, actionDefinitions, req.currentUser.id) ||
+    (role === "manager" && vehicle.assigned_role === role) ||
+    (role === "salesperson" && (includeAllSalespersonVehicles || vehicle.submitted_by_user_id === req.currentUser.id)) ||
+    (vehicle.assigned_role === role && (role !== "detailer" || vehicle.status !== STATUS.DETAIL_STARTED || vehicle.assigned_user_id === req.currentUser.id))
+  );
 
-  if (userId && userId !== "all") {
-    filtered = filtered.filter((vehicle) => vehicle.assigned_user_id === userId);
+  if (role === "detailer") {
+    filtered = filtered.filter((vehicle) => vehicle.status !== STATUS.DETAIL_STARTED || vehicle.assigned_user_id === req.currentUser.id);
   }
 
   if (normalizedSearch) {
     filtered = filtered.filter((vehicle) =>
-      [
-        vehicle.stock_number,
-        vehicle.make,
-        vehicle.model,
-        vehicle.color,
-        vehicle.status
-      ]
+      [vehicle.stock_number, vehicle.make, vehicle.model, vehicle.color, vehicle.status]
         .join(" ")
         .toLowerCase()
         .includes(normalizedSearch)
@@ -327,16 +659,28 @@ app.get("/api/vehicles", (req, res) => {
   res.json({ vehicles: filtered });
 });
 
-app.get("/api/vehicles/:id", (req, res) => {
-  const vehicle = getVehicle(req.params.id);
-  if (!vehicle) {
+app.get("/api/vehicles/:id", async (req, res) => {
+  const [vehicleRow, users, actionDefinitionsRaw, auditEntries] = await Promise.all([
+    getVehicle(req.params.id),
+    listUsers(),
+    listActionDefinitions(),
+    listAuditEntries({ vehicleId: req.params.id, limit: 250 })
+  ]);
+
+  if (!vehicleRow) {
     return res.status(404).json({ message: "Vehicle not found." });
   }
 
-  res.json({ vehicle: decorateVehicleForUser(vehicle, req.query.userId ? String(req.query.userId) : null) });
+  const vehicle = normalizeVehicle(vehicleRow);
+  const usersById = new Map(users.map((user) => [user.id, sanitizeUser(user)]));
+  const vehiclesById = new Map([[vehicle.id, vehicle]]);
+  const actionDefinitions = actionDefinitionsRaw.map(normalizeActionDefinition);
+  const timeline = auditEntries.map((entry) => decorateAuditEntry(entry, usersById, vehiclesById));
+
+  res.json({ vehicle: decorateVehicle(vehicle, usersById, timeline, actionDefinitions, req.currentUser.id) });
 });
 
-app.post("/api/vehicles", (req, res) => {
+app.post("/api/vehicles", async (req, res) => {
   const {
     stock_number,
     year,
@@ -345,6 +689,7 @@ app.post("/api/vehicles", (req, res) => {
     color,
     due_date,
     submitted_by_user_id,
+    assigned_user_id = null,
     needs_service = false,
     needs_bodywork = false,
     service_notes = "",
@@ -353,33 +698,54 @@ app.post("/api/vehicles", (req, res) => {
     notes = ""
   } = req.body;
 
-  if (!stock_number || !year || !make || !model || !due_date || !submitted_by_user_id) {
+  if (!stock_number || !year || !make || !model || !due_date) {
     return res.status(400).json({ message: "Missing required vehicle fields." });
   }
 
-  if (vehicles.some((vehicle) => vehicle.stock_number.toLowerCase() === String(stock_number).toLowerCase())) {
+  const existing = (await listVehicles()).find((vehicle) => vehicle.stock_number.toLowerCase() === String(stock_number).toLowerCase());
+  if (existing) {
     return res.status(409).json({ message: "That stock number already exists." });
+  }
+
+  const users = await listUsers();
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const submittedByUserId = req.currentUser.role === "manager" && submitted_by_user_id
+    ? submitted_by_user_id
+    : req.currentUser.id;
+
+  const submittedByUser = usersById.get(submittedByUserId);
+  if (!submittedByUser) {
+    return res.status(400).json({ message: "The selected salesperson could not be found." });
+  }
+
+  if (req.currentUser.role !== "manager" && submittedByUserId !== req.currentUser.id) {
+    return res.status(403).json({ message: "Only a Manager can submit a get ready for another user." });
+  }
+
+  const initialAssignedUserId = req.currentUser.role === "manager" && assigned_user_id ? assigned_user_id : null;
+  if (initialAssignedUserId && !usersById.has(initialAssignedUserId)) {
+    return res.status(400).json({ message: "The selected assigned user could not be found." });
   }
 
   const vehicle = {
     id: uuid(),
     stock_number,
-    year,
+    year: Number(year),
     make,
     model,
     color,
     status: STATUS.SUBMITTED,
     due_date,
     current_location: "Submitted",
-    assigned_user_id: null,
-    submitted_by_user_id,
-    needs_service,
-    needs_bodywork,
+    assigned_user_id: initialAssignedUserId,
+    submitted_by_user_id: submittedByUserId,
+    needs_service: Boolean(needs_service),
+    needs_bodywork: Boolean(needs_bodywork),
     recall_checked: false,
     recall_open: false,
     recall_completed: false,
     fueled: false,
-    qc_required,
+    qc_required: Boolean(qc_required),
     qc_completed: false,
     service_status: needs_service ? "pending" : "not_needed",
     bodywork_status: needs_bodywork ? "pending" : "not_needed",
@@ -391,32 +757,46 @@ app.post("/api/vehicles", (req, res) => {
     updated_at: new Date().toISOString()
   };
 
-  vehicles.unshift(vehicle);
-  addAuditEntry({
-    vehicleId: vehicle.id,
-    userId: submitted_by_user_id,
-    actionType: "vehicle_created",
-    fieldChanged: "status",
-    oldValue: "",
-    newValue: "Get Ready Submitted"
-  });
+  const pool = getPool();
+  const connection = await pool.getConnection();
 
-  res.status(201).json({ vehicle: decorateVehicle(vehicle) });
+  try {
+    await connection.beginTransaction();
+    await insertVehicle(connection, vehicle);
+    await addAuditEntry(connection, {
+      vehicleId: vehicle.id,
+      userId: req.currentUser.id,
+      actionType: "vehicle_created",
+      fieldChanged: "status",
+      oldValue: "",
+      newValue: "Get Ready Submitted"
+    });
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  res.status(201).json({ vehicle });
 });
 
-app.patch("/api/vehicles/:id/status", (req, res) => {
-  const { status, userId } = req.body;
-  const vehicle = getVehicle(req.params.id);
+app.patch("/api/vehicles/:id/status", async (req, res) => {
+  const { status } = req.body;
+  const vehicleRow = await getVehicle(req.params.id);
 
-  if (!vehicle) {
+  if (!vehicleRow) {
     return res.status(404).json({ message: "Vehicle not found." });
   }
 
-  if (!userId || !getUser(userId)) {
-    return res.status(400).json({ message: "A valid user is required." });
+  const vehicle = normalizeVehicle(vehicleRow);
+
+  if (status === STATUS.READY && !["salesperson", "manager"].includes(req.currentUser.role)) {
+    return res.status(403).json({ message: "Only Salespeople and Managers can mark a car completed." });
   }
 
-  if (isStatusUndo(vehicle.status, status) && !isManagerUser(userId)) {
+  if (isStatusUndo(vehicle.status, status) && req.currentUser.role !== "manager") {
     return res.status(403).json({ message: "Only a Manager can undo a completed status step." });
   }
 
@@ -425,48 +805,44 @@ app.patch("/api/vehicles/:id/status", (req, res) => {
     return res.status(400).json({ message: transition.message, blockers: transition.blockers ?? [] });
   }
 
-  updateVehicle(
-    vehicle,
+  const nextVehicle = await updateVehicleWithAudit(
+    vehicle.id,
     {
       status,
-      assigned_user_id: status === STATUS.DETAIL_STARTED ? userId : vehicle.assigned_user_id,
+      assigned_user_id: status === STATUS.DETAIL_STARTED ? req.currentUser.id : vehicle.assigned_user_id,
       assigned_role: STATUS_META[status]?.nextRole ?? deriveAssignedRole(vehicle)
     },
-    userId,
+    req.currentUser.id,
     "status_change"
   );
 
-  res.json({ vehicle: decorateVehicle(vehicle) });
+  res.json({ vehicle: nextVehicle });
 });
 
-app.patch("/api/vehicles/:id/flags", (req, res) => {
-  const { userId, ...changes } = req.body;
-  const vehicle = getVehicle(req.params.id);
+app.patch("/api/vehicles/:id/flags", async (req, res) => {
+  const vehicleRow = await getVehicle(req.params.id);
 
-  if (!vehicle) {
+  if (!vehicleRow) {
     return res.status(404).json({ message: "Vehicle not found." });
   }
 
-  if (!userId || !getUser(userId)) {
-    return res.status(400).json({ message: "A valid user is required." });
-  }
-
-  const normalized = { ...changes };
+  const vehicle = normalizeVehicle(vehicleRow);
+  const normalized = { ...req.body };
   const protectedUndoField = getProtectedUndoField(vehicle, normalized);
 
-  if (protectedUndoField && !isManagerUser(userId)) {
+  if (protectedUndoField && req.currentUser.role !== "manager") {
     return res.status(403).json({ message: `Only a Manager can undo ${protectedUndoField.replaceAll("_", " ")} once it is complete.` });
   }
 
   if (typeof normalized.needs_service === "boolean") {
-    normalized.service_status = normalized.needs_service ? vehicle.service_status === "not_needed" ? "pending" : vehicle.service_status : "not_needed";
+    normalized.service_status = normalized.needs_service ? (vehicle.service_status === "not_needed" ? "pending" : vehicle.service_status) : "not_needed";
     if (!normalized.needs_service) {
       normalized.service_notes = "";
     }
   }
 
   if (typeof normalized.needs_bodywork === "boolean") {
-    normalized.bodywork_status = normalized.needs_bodywork ? vehicle.bodywork_status === "not_needed" ? "pending" : vehicle.bodywork_status : "not_needed";
+    normalized.bodywork_status = normalized.needs_bodywork ? (vehicle.bodywork_status === "not_needed" ? "pending" : vehicle.bodywork_status) : "not_needed";
     if (!normalized.needs_bodywork) {
       normalized.bodywork_notes = "";
     }
@@ -491,32 +867,37 @@ app.patch("/api/vehicles/:id/flags", (req, res) => {
     normalized.status = STATUS.QC;
   }
 
-  updateVehicle(vehicle, normalized, userId, "flag_update");
-  res.json({ vehicle: decorateVehicle(vehicle) });
+  const nextVehicle = await updateVehicleWithAudit(vehicle.id, normalized, req.currentUser.id, "flag_update");
+  res.json({ vehicle: nextVehicle });
 });
 
-app.get("/api/dashboard/summary", (req, res) => {
-  const { role = "manager" } = req.query;
-  const decorated = vehicles.map(decorateVehicle);
+app.get("/api/dashboard/summary", async (req, res) => {
+  const role = typeof req.query.role === "string" && req.query.role !== "all" ? req.query.role : req.currentUser.role;
+  const includeAllSalespersonVehicles = role === "salesperson" && req.query.view === "all";
+  const [actionDefinitionsRaw, vehiclesRaw] = await Promise.all([listActionDefinitions(), listVehicles()]);
+  const actionDefinitions = actionDefinitionsRaw.map(normalizeActionDefinition);
+  const vehicles = vehiclesRaw
+    .map(normalizeVehicle)
+    .filter((vehicle) => role !== "salesperson" || includeAllSalespersonVehicles || vehicle.submitted_by_user_id === req.currentUser.id);
   const now = Date.now();
 
   const summary = {
-    total: decorated.length,
-    overdue: decorated.filter((vehicle) => new Date(vehicle.due_date).getTime() < now && vehicle.status !== STATUS.READY).length,
-    ready: decorated.filter((vehicle) => vehicle.status === STATUS.READY).length,
-    needsAction: decorated.filter((vehicle) => getQueueForRole(vehicle, role)).length,
+    total: vehicles.length,
+    overdue: vehicles.filter((vehicle) => new Date(vehicle.due_date).getTime() < now && vehicle.status !== STATUS.READY).length,
+    ready: vehicles.filter((vehicle) => vehicle.status === STATUS.READY).length,
+    needsAction: vehicles.filter((vehicle) => getQueueForRole(vehicle, role, actionDefinitions, req.currentUser.id)).length,
     byPipeline: ["Submitted", "At Detail", "In Detail", "Service", "QC", "Ready"].map((column) => ({
       column,
-      count: decorated.filter((vehicle) => vehicle.pipeline === column).length
+      count: vehicles.filter((vehicle) => getPipelineColumn(vehicle) === column).length
     }))
   };
 
   res.json({ summary });
 });
 
-app.get("/api/dashboard/calendar", (_req, res) => {
-  const calendar = vehicles
-    .map(decorateVehicle)
+app.get("/api/dashboard/calendar", async (_req, res) => {
+  const items = (await listVehicles())
+    .map(normalizeVehicle)
     .sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
     .map((vehicle) => ({
       id: vehicle.id,
@@ -526,7 +907,7 @@ app.get("/api/dashboard/calendar", (_req, res) => {
       status: formatStatus(vehicle.status)
     }));
 
-  res.json({ items: calendar });
+  res.json({ items });
 });
 
 app.get("/api/meta", (_req, res) => {
@@ -538,9 +919,10 @@ app.get("/api/meta", (_req, res) => {
 
 app.use((err, _req, res, _next) => {
   console.error(err);
-  res.status(500).json({ message: "Unexpected server error." });
+  res.status(err.statusCode || 500).json({ message: err.message || "Unexpected server error." });
 });
 
-app.listen(port, () => {
+app.listen(port, async () => {
+  await getPool().query("SELECT 1");
   console.log(`Get Ready API listening on ${port}`);
 });

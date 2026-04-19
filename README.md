@@ -24,6 +24,7 @@ database/ MySQL schema
 ```bash
 cd server
 npm install
+npm run migrate:auth
 npm run dev
 ```
 
@@ -39,6 +40,19 @@ npm run dev
 
 The frontend runs on `http://localhost:5173`.
 
+## Authentication
+
+- The app now uses session-based login with hashed passwords
+- Existing demo users can be bootstrapped with:
+
+```bash
+cd server
+npm run migrate:auth
+```
+
+- Default migrated password: `ChangeMe123!`
+- Users are forced to change that temporary password on first sign-in
+
 ## Demo workflow notes
 
 - `Ready / Complete` is blocked until:
@@ -50,9 +64,60 @@ The frontend runs on `http://localhost:5173`.
 - Parallel tasks like recall checks and fueling never block the main workflow
 - Every update creates an audit entry with old and new values
 
-## Deployment direction
+## Deployment
 
-- Frontend: Vercel or Netlify
-- Backend: Azure App Service or Heroku-style Node host
-- Database: Azure MySQL using the schema in `database/schema.sql`
+### Recommended hosting
 
+- Frontend: Vercel
+- Backend: Render
+- Database: Azure MySQL using `database/schema.sql`
+
+### Render backend
+
+The repo includes `render.yaml` at the project root for a Render web service blueprint.
+
+Service details:
+
+- Root directory: `server`
+- Build command: `npm install`
+- Start command: `npm start`
+- Health check path: `/api/health`
+
+Required Render environment variables:
+
+- `DB_HOST`
+- `DB_PORT=3306`
+- `DB_NAME=getready`
+- `DB_USER`
+- `DB_PASSWORD`
+- `DB_SSL=true`
+- `PORT=4000`
+
+### Vercel frontend
+
+The frontend lives in `client` and includes `client/vercel.json` for SPA rewrites.
+
+Vercel project settings:
+
+- Root directory: `client`
+- Framework preset: `Vite`
+- Build command: `npm run build`
+- Output directory: `dist`
+
+Required Vercel environment variable:
+
+- `VITE_API_URL=https://your-render-service.onrender.com/api`
+
+### Local production checks
+
+Before deploying:
+
+```bash
+cd server
+npm start
+```
+
+```bash
+cd client
+npm run build
+```

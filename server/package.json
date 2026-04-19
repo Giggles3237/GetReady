@@ -5,12 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/app.js",
-    "start": "node src/app.js"
+    "start": "node src/app.js",
+    "seed:demo": "node scripts/seed-demo.js",
+    "migrate:auth": "node scripts/migrate-auth.js"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "express-session": "^1.18.1",
+    "mysql2": "^3.11.3",
     "uuid": "^11.0.3"
   }
 }
-

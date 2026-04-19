@@ -47,6 +47,23 @@ button {
   padding: 12px;
 }
 
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(14px);
+  padding: 18px;
+}
+
 .hero-panel,
 .panel {
   background: var(--panel);
@@ -144,6 +161,10 @@ h3 {
   gap: 10px;
 }
 
+.auth-form {
+  margin-top: 0;
+}
+
 label {
   display: grid;
   gap: 4px;
@@ -199,6 +220,19 @@ select {
   gap: 8px;
 }
 
+.session-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.session-meta {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .pill,
 .status-chip,
 .flag {
@@ -243,6 +277,16 @@ select {
 .action-sections {
   display: grid;
   gap: 12px;
+}
+
+.submission-section {
+  margin-top: 12px;
+}
+
+.view-toggle {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0;
 }
 
 .admin-nav {
@@ -448,6 +492,14 @@ select {
   padding: 14px;
 }
 
+.submission-modal {
+  width: min(560px, 100%);
+}
+
+.modal-form {
+  margin-top: 12px;
+}
+
 .step-list {
   display: grid;
   gap: 8px;
@@ -544,6 +596,23 @@ select {
   border-radius: 14px;
   background: rgba(181, 67, 42, 0.12);
   color: var(--danger);
+}
+
+.success-banner {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(10, 92, 82, 0.12);
+  color: var(--accent);
+}
+
+.temp-password-banner {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(215, 104, 60, 0.14);
+  color: #8f4a1f;
+  font-weight: 700;
 }
 
 .empty-state {

@@ -185,7 +185,7 @@ export function syncWorkflowState(vehicle) {
   return vehicle;
 }
 
-function isActionAvailable(vehicle, action, currentUserId = null) {
+function isActionAvailable(vehicle, action, currentUserId = null, currentUserRole = null) {
   if (!action.enabled) {
     return false;
   }
@@ -235,26 +235,26 @@ function isActionAvailable(vehicle, action, currentUserId = null) {
   }
 
   if (action.key === "toggle_fueled") {
-    return !vehicle.fueled;
+    return !vehicle.fueled && vehicle.status !== STATUS.DETAIL_STARTED;
   }
 
   if (action.key === STATUS.READY) {
-    return canTransition(vehicle, STATUS.READY).allowed;
+    return canTransition(vehicle, STATUS.READY).allowed && ["salesperson", "manager"].includes(currentUserRole ?? "");
   }
 
   return false;
 }
 
-export function buildActionList(vehicle, actionDefinitions = DEFAULT_ACTION_DEFINITIONS, currentUserId = null) {
+export function buildActionList(vehicle, actionDefinitions = DEFAULT_ACTION_DEFINITIONS, currentUserId = null, currentUserRole = null) {
   const actions = [];
   actionDefinitions.forEach((action) => {
-    if (!isActionAvailable(vehicle, action, currentUserId)) {
+    if (!isActionAvailable(vehicle, action, currentUserId, currentUserRole)) {
       return;
     }
 
     actions.push({
       ...action,
-      role: action.key === STATUS.READY ? deriveAssignedRole(vehicle) ?? action.role : action.role
+      role: action.key === STATUS.READY ? currentUserRole ?? action.role : action.role
     });
   });
 

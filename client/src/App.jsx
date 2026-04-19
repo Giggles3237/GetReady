@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
-const API_URL = "http://localhost:4000/api";
+const API_URL = (import.meta.env.VITE_API_URL || "/api").replace(/\/$/, "");
+const AUTO_REFRESH_INTERVAL_MS = 15000;
 
 const roleOptions = [
   { value: "salesperson", label: "Salesperson" },
@@ -11,23 +12,6 @@ const roleOptions = [
 ];
 
 const pipelineColumns = ["Submitted", "At Detail", "In Detail", "Service", "QC", "Ready"];
-const statusSequence = [
-  { key: "to_detail", label: "Take Car To Detail", kind: "status" },
-  { key: "detail_started", label: "Detail Started", kind: "status" },
-  { key: "detail_finished", label: "Detail Finished", kind: "status" },
-  { key: "removed_from_detail", label: "Bring Car Up From Detail", kind: "status" },
-  { key: "toggle_fueled", label: "Fuel The Car", kind: "flag", field: "fueled" },
-  { key: "toggle_recall", label: "Recalls Checked", kind: "flag", field: "recall_checked" },
-  { key: "open_recall", label: "OPEN RECALL", kind: "flag", field: "recall_open", manual: true },
-  { key: "complete_recall", label: "Recall Completed", kind: "flag", field: "recall_completed" },
-  { key: "start_service", label: "Service Started", kind: "flag", field: "service_status", doneValue: "in_progress" },
-  { key: "complete_service", label: "Service Complete", kind: "flag", field: "service_status", doneValue: "completed" },
-  { key: "start_bodywork", label: "Body Work Started", kind: "flag", field: "bodywork_status", doneValue: "in_progress" },
-  { key: "complete_bodywork", label: "Body Work Complete", kind: "flag", field: "bodywork_status", doneValue: "completed" },
-  { key: "complete_qc", label: "QC Complete", kind: "flag", field: "qc_completed" },
-  { key: "ready", label: "Ready", kind: "status" }
-];
-
 const statusProgressOrder = {
   submitted: 1,
   to_detail: 2,
@@ -95,67 +79,20 @@ function getRoleActionPriority(role, actionKey) {
   return 99;
 }
 
-function canUndoCompletedField(role, field, value) {
-  if (role === "manager") {
-    return true;
-  }
-
-  if (["recall_checked", "fueled", "qc_completed"].includes(field) && value === true) {
-    return false;
-  }
-
-  return true;
-}
-
 function formatFieldLabel(value) {
   return value.replaceAll("_", " ");
 }
 
-function getStepState(vehicle, step) {
-  if (step.key === "open_recall") {
-    return {
-      completed: vehicle.recall_open === true || vehicle.recall_completed === true,
-      available: vehicle.recall_checked === true && !vehicle.recall_open && !vehicle.recall_completed
-    };
-  }
-
-  if (step.kind === "status") {
-    const currentIndex = statusProgressOrder[vehicle.status] ?? 0;
-    const stepIndex = statusProgressOrder[step.key] ?? 0;
-    const available = vehicle.actions.some((action) => action.key === step.key);
-    const completed = vehicle.status === step.key || currentIndex > stepIndex;
-    return { completed, available };
-  }
-
-  if (step.field === "fueled" || step.field === "recall_checked" || step.field === "qc_completed") {
-    return {
-      completed: vehicle[step.field] === true,
-      available: vehicle.actions.some((action) => action.key === step.key)
-    };
-  }
-
-  if (step.field === "service_status" || step.field === "bodywork_status") {
-    return {
-      completed: vehicle[step.field] === step.doneValue,
-      available: vehicle.actions.some((action) => action.key === step.key)
-    };
-  }
-
-  return { completed: false, available: false };
-}
-
-function getLatestChangeForStep(vehicle, step) {
-  const timeline = vehicle.timeline ?? [];
-
-  if (step.kind === "status") {
-    return timeline.find((entry) => entry.field_changed === "status" && entry.new_value === step.key);
-  }
-
-  if (step.field === "service_status" || step.field === "bodywork_status") {
-    return timeline.find((entry) => entry.field_changed === step.field && entry.new_value === step.doneValue);
-  }
-
-  return timeline.find((entry) => entry.field_changed === step.field && entry.new_value === "true");
+function performAction(vehicleId, actionKey, updateStatus, updateFlags) {
+  if (actionKey === "toggle_fueled") return updateFlags(vehicleId, { fueled: true });
+  if (actionKey === "toggle_recall") return updateFlags(vehicleId, { recall_checked: true });
+  if (actionKey === "complete_recall") return updateFlags(vehicleId, { recall_completed: true });
+  if (actionKey === "start_service") return updateFlags(vehicleId, { service_status: "in_progress" });
+  if (actionKey === "complete_service") return updateFlags(vehicleId, { service_status: "completed" });
+  if (actionKey === "start_bodywork") return updateFlags(vehicleId, { bodywork_status: "in_progress" });
+  if (actionKey === "complete_bodywork") return updateFlags(vehicleId, { bodywork_status: "completed" });
+  if (actionKey === "complete_qc") return updateFlags(vehicleId, { qc_completed: true });
+  return updateStatus(vehicleId, actionKey);
 }
 
 function getServiceDisplayLabel(vehicle) {
@@ -207,7 +144,15 @@ function getDetailDisplayLabel(vehicle) {
 }
 
 function getFuelDisplayLabel(vehicle) {
-  return vehicle.fueled ? "Fueled" : "Needs Fuel";
+  if (vehicle.fueled) {
+    return "Fueled";
+  }
+
+  if (vehicle.status === "detail_started") {
+    return "Fuel Pending";
+  }
+
+  return "Needs Fuel";
 }
 
 function getWorkflowBadges(vehicle) {
@@ -257,9 +202,13 @@ function groupVehiclesByAction(vehicles, role) {
   return Array.from(grouped.entries()).map(([label, items]) => ({ label, items }));
 }
 
-async function request(path, options) {
+async function request(path, options = {}) {
   const response = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers ?? {})
+    },
     ...options
   });
 
@@ -271,20 +220,96 @@ async function request(path, options) {
   return response.json();
 }
 
+function AuthScreen({ loginForm, setLoginForm, onSubmit, error }) {
+  return (
+    <div className="auth-shell">
+      <section className="auth-card">
+        <p className="eyebrow">Get Ready Tracking System</p>
+        <h1>Sign In</h1>
+        <p className="lead">Use your dealership login to access your task queue and audit trail.</p>
+        {error ? <div className="error-banner">{error}</div> : null}
+        <form className="control-card auth-form" onSubmit={onSubmit}>
+          <label>
+            Email
+            <input
+              type="email"
+              value={loginForm.email}
+              onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
+              required
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={loginForm.password}
+              onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
+              required
+            />
+          </label>
+          <button className="primary-btn" type="submit">Sign In</button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function PasswordChangeScreen({ passwordForm, setPasswordForm, onSubmit, error, user }) {
+  return (
+    <div className="auth-shell">
+      <section className="auth-card">
+        <p className="eyebrow">{user.name}</p>
+        <h1>Set Your Password</h1>
+        <p className="lead">Your temporary password worked. Please set a new permanent password before continuing.</p>
+        {error ? <div className="error-banner">{error}</div> : null}
+        <form className="control-card auth-form" onSubmit={onSubmit}>
+          <label>
+            Current Password
+            <input
+              type="password"
+              value={passwordForm.currentPassword}
+              onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))}
+              required
+            />
+          </label>
+          <label>
+            New Password
+            <input
+              type="password"
+              value={passwordForm.newPassword}
+              onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))}
+              required
+              minLength={8}
+            />
+          </label>
+          <button className="primary-btn" type="submit">Save Password</button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
+  const [authReady, setAuthReady] = useState(false);
+  const [authUser, setAuthUser] = useState(null);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [adminSection, setAdminSection] = useState("steps");
-  const [role, setRole] = useState("manager");
   const [users, setUsers] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [summary, setSummary] = useState(null);
   const [calendarItems, setCalendarItems] = useState([]);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
+  const [showSubmissionModal, setShowSubmissionModal] = useState(false);
   const [search, setSearch] = useState("");
+  const [salespersonView, setSalespersonView] = useState("mine");
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [adminActions, setAdminActions] = useState([]);
   const [auditFeed, setAuditFeed] = useState([]);
-  const [newUser, setNewUser] = useState({ name: "", role: "salesperson" });
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
+  const [newUser, setNewUser] = useState({ name: "", email: "", role: "salesperson" });
   const [submission, setSubmission] = useState({
     stock_number: "",
     year: "",
@@ -292,6 +317,8 @@ export default function App() {
     model: "",
     color: "",
     due_date: "",
+    submitted_by_user_id: "",
+    assigned_user_id: "",
     needs_service: false,
     needs_bodywork: false,
     service_notes: "",
@@ -300,17 +327,35 @@ export default function App() {
     notes: ""
   });
 
-  const activeUser = useMemo(() => users.find((user) => user.role === role) ?? users[0] ?? null, [users, role]);
+  const activeUser = authUser;
+  const role = authUser?.role ?? "manager";
+  const canAccessAdmin = role === "manager";
+  const salespersonUsers = useMemo(() => users.filter((user) => user.role === "salesperson"), [users]);
+  const assignableUsers = useMemo(() => users.filter((user) => user.is_active), [users]);
 
-  async function loadDashboard(nextRole = role, nextSearch = search) {
+  async function syncSession() {
+    try {
+      const data = await request("/auth/me");
+      setAuthUser(data.user);
+    } catch {
+      setAuthUser(null);
+    } finally {
+      setAuthReady(true);
+    }
+  }
+
+  async function loadDashboard(nextSearch = search) {
+    if (!authUser) {
+      return;
+    }
+
     try {
       setError("");
-      const userData = await request("/users");
-      const scopedUser = userData.users.find((user) => user.role === nextRole) ?? userData.users[0] ?? null;
-      const scopedUserId = scopedUser?.id ? `&userId=${encodeURIComponent(scopedUser.id)}` : "";
-      const [vehicleData, summaryData, calendarData] = await Promise.all([
-        request(`/vehicles?role=${nextRole}&search=${encodeURIComponent(nextSearch)}${scopedUserId}`),
-        request(`/dashboard/summary?role=${nextRole}`),
+      const viewQuery = role === "salesperson" ? `&view=${salespersonView}` : "";
+      const [userData, vehicleData, summaryData, calendarData] = await Promise.all([
+        request("/users"),
+        request(`/vehicles?role=${role}&search=${encodeURIComponent(nextSearch)}${viewQuery}`),
+        request(`/dashboard/summary?role=${role}${viewQuery}`),
         request("/dashboard/calendar")
       ]);
 
@@ -320,11 +365,10 @@ export default function App() {
       setCalendarItems(calendarData.items);
 
       if (selectedVehicle) {
-        const refreshed = vehicleData.vehicles.find((vehicle) => vehicle.id === selectedVehicle.id);
-        if (refreshed) {
-          await openVehicle(refreshed.id);
-        } else {
-          setSelectedVehicle(null);
+        try {
+          await openVehicle(selectedVehicle.id);
+        } catch {
+          // Keep the current detail view open even if it drops out of the filtered dashboard list.
         }
       }
     } catch (err) {
@@ -333,17 +377,91 @@ export default function App() {
   }
 
   useEffect(() => {
-    loadDashboard();
+    syncSession();
   }, []);
 
   useEffect(() => {
-    loadDashboard(role, search);
-  }, [role]);
+    if (!authUser || authUser.must_change_password) {
+      return;
+    }
+
+    loadDashboard(search);
+  }, [authUser, search, salespersonView]);
+
+  useEffect(() => {
+    if (!authUser) {
+      return;
+    }
+
+    setSubmission((current) => ({
+      ...current,
+      submitted_by_user_id: current.submitted_by_user_id || authUser.id
+    }));
+  }, [authUser]);
+
+  useEffect(() => {
+    if (!authUser || authUser.must_change_password) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      loadDashboard(search);
+    }, AUTO_REFRESH_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [authUser, search, selectedVehicle?.id, salespersonView]);
+
+  async function handleLogin(event) {
+    event.preventDefault();
+
+    try {
+      setError("");
+      const data = await request("/auth/login", {
+        method: "POST",
+        body: JSON.stringify(loginForm)
+      });
+      setAuthUser(data.user);
+      setLoginForm({ email: "", password: "" });
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleLogout() {
+    await request("/auth/logout", { method: "POST", body: JSON.stringify({}) });
+    setAuthUser(null);
+    setUsers([]);
+    setVehicles([]);
+    setSummary(null);
+    setCalendarItems([]);
+    setSelectedVehicle(null);
+    setAdminActions([]);
+    setAuditFeed([]);
+    setSuccessMessage("");
+    setTemporaryPassword("");
+  }
+
+  async function handlePasswordChange(event) {
+    event.preventDefault();
+
+    try {
+      setError("");
+      const data = await request("/auth/change-password", {
+        method: "PATCH",
+        body: JSON.stringify(passwordForm)
+      });
+      setAuthUser(data.user);
+      setPasswordForm({ currentPassword: "", newPassword: "" });
+    } catch (err) {
+      setError(err.message);
+    }
+  }
 
   async function openVehicle(vehicleId) {
     try {
-      const userIdQuery = activeUser?.id ? `?userId=${encodeURIComponent(activeUser.id)}` : "";
-      const data = await request(`/vehicles/${vehicleId}${userIdQuery}`);
+      const data = await request(`/vehicles/${vehicleId}`);
       setSelectedVehicle(data.vehicle);
     } catch (err) {
       setError(err.message);
@@ -351,11 +469,10 @@ export default function App() {
   }
 
   async function updateStatus(vehicleId, status) {
-    if (!activeUser) return;
     try {
       await request(`/vehicles/${vehicleId}/status`, {
         method: "PATCH",
-        body: JSON.stringify({ status, userId: activeUser.id })
+        body: JSON.stringify({ status })
       });
       await loadDashboard();
       await openVehicle(vehicleId);
@@ -365,11 +482,10 @@ export default function App() {
   }
 
   async function updateFlags(vehicleId, changes) {
-    if (!activeUser) return;
     try {
       await request(`/vehicles/${vehicleId}/flags`, {
         method: "PATCH",
-        body: JSON.stringify({ ...changes, userId: activeUser.id })
+        body: JSON.stringify(changes)
       });
       await loadDashboard();
       await openVehicle(vehicleId);
@@ -380,15 +496,17 @@ export default function App() {
 
   async function createVehicle(event) {
     event.preventDefault();
-    if (!activeUser) return;
 
     try {
-      await request("/vehicles", {
+      setError("");
+      setTemporaryPassword("");
+      const data = await request("/vehicles", {
         method: "POST",
         body: JSON.stringify({
           ...submission,
           year: Number(submission.year),
-          submitted_by_user_id: activeUser.id,
+          submitted_by_user_id: submission.submitted_by_user_id || authUser.id,
+          assigned_user_id: submission.assigned_user_id || null,
           due_date: new Date(submission.due_date).toISOString()
         })
       });
@@ -400,6 +518,8 @@ export default function App() {
         model: "",
         color: "",
         due_date: "",
+        submitted_by_user_id: authUser.id,
+        assigned_user_id: "",
         needs_service: false,
         needs_bodywork: false,
         service_notes: "",
@@ -407,37 +527,44 @@ export default function App() {
         qc_required: false,
         notes: ""
       });
+      setSuccessMessage(`${data.vehicle.stock_number} submitted successfully. Next up: BMW Genius takes the car to detail.`);
+      setShowSubmissionModal(false);
       await loadDashboard();
+      await openVehicle(data.vehicle.id);
     } catch (err) {
+      setSuccessMessage("");
       setError(err.message);
     }
   }
 
   async function loadAdminData() {
+    if (!canAccessAdmin) {
+      return;
+    }
+
     try {
       setError("");
-      const [actionData, auditData] = await Promise.all([
+      const [userData, actionData, auditData] = await Promise.all([
+        request("/users"),
         request("/admin/actions"),
         request("/admin/audit?limit=150")
       ]);
 
+      setUsers(userData.users);
       setAdminActions(actionData.actions);
       setAuditFeed(auditData.audit);
-      setUsers((current) => current.length > 0 ? current : []);
     } catch (err) {
       setError(err.message);
     }
   }
 
   async function updateAdminAction(actionKey, changes) {
-    if (!activeUser) return;
     try {
       const data = await request(`/admin/actions/${actionKey}`, {
         method: "PATCH",
-        body: JSON.stringify({ ...changes, userId: activeUser.id })
+        body: JSON.stringify(changes)
       });
       setAdminActions(data.actions);
-      await loadAdminData();
       await loadDashboard();
     } catch (err) {
       setError(err.message);
@@ -446,33 +573,43 @@ export default function App() {
 
   async function createAdminUser(event) {
     event.preventDefault();
-    if (!activeUser) return;
 
     try {
       const data = await request("/admin/users", {
         method: "POST",
-        body: JSON.stringify({ ...newUser, userId: activeUser.id })
+        body: JSON.stringify(newUser)
       });
       setUsers(data.users);
-      setNewUser({ name: "", role: "salesperson" });
+      setNewUser({ name: "", email: "", role: "salesperson" });
+      setTemporaryPassword(`${data.user.email} temporary password: ${data.temporaryPassword}`);
+      setSuccessMessage(`${data.user.name} created successfully.`);
       await loadAdminData();
-      await loadDashboard();
     } catch (err) {
       setError(err.message);
     }
   }
 
   async function updateAdminUser(targetUserId, changes) {
-    if (!activeUser) return;
-
     try {
       const data = await request(`/admin/users/${targetUserId}`, {
         method: "PATCH",
-        body: JSON.stringify({ ...changes, userId: activeUser.id })
+        body: JSON.stringify(changes)
       });
       setUsers(data.users);
       await loadAdminData();
-      await loadDashboard();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function resetAdminPassword(targetUserId, email) {
+    try {
+      const data = await request(`/admin/users/${targetUserId}/reset-password`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      setTemporaryPassword(`${email} temporary password: ${data.temporaryPassword}`);
+      setSuccessMessage("Temporary password reset successfully.");
     } catch (err) {
       setError(err.message);
     }
@@ -495,8 +632,7 @@ export default function App() {
       if (!leftAction && rightAction) return 1;
 
       if (leftAction && rightAction) {
-        const actionPriorityDelta =
-          getRoleActionPriority(role, leftAction.key) - getRoleActionPriority(role, rightAction.key);
+        const actionPriorityDelta = getRoleActionPriority(role, leftAction.key) - getRoleActionPriority(role, rightAction.key);
         if (actionPriorityDelta !== 0) {
           return actionPriorityDelta;
         }
@@ -511,21 +647,26 @@ export default function App() {
     });
   }, [vehicles, role]);
 
-  const nextUpVehicles = useMemo(() => {
-    return prioritizedVehicles.filter((vehicle) => getNextActionForRole(vehicle, role));
-  }, [prioritizedVehicles, role]);
+  const nextUpVehicles = useMemo(() => prioritizedVehicles.filter((vehicle) => getNextActionForRole(vehicle, role)), [prioritizedVehicles, role]);
+  const mySubmittedVehicles = useMemo(
+    () => prioritizedVehicles.filter((vehicle) => vehicle.submitted_by_user_id === authUser?.id),
+    [prioritizedVehicles, authUser]
+  );
+  const actionSections = useMemo(() => groupVehiclesByAction(nextUpVehicles, role), [nextUpVehicles, role]);
+  const roleSpecificActions = useMemo(() => selectedVehicle ? selectedVehicle.actions.filter((action) => action.role === role) : [], [selectedVehicle, role]);
+  const showSalespersonSubmissionSection = role === "salesperson" && salespersonView === "mine" && mySubmittedVehicles.length > 0;
 
-  const actionSections = useMemo(() => {
-    return groupVehiclesByAction(nextUpVehicles, role);
-  }, [nextUpVehicles, role]);
+  if (!authReady) {
+    return <div className="auth-shell"><section className="auth-card"><h1>Loading...</h1></section></div>;
+  }
 
-  const roleSpecificActions = useMemo(() => {
-    if (!selectedVehicle) {
-      return [];
-    }
+  if (!authUser) {
+    return <AuthScreen loginForm={loginForm} setLoginForm={setLoginForm} onSubmit={handleLogin} error={error} />;
+  }
 
-    return selectedVehicle.actions.filter((action) => action.role === role);
-  }, [selectedVehicle, role]);
+  if (authUser.must_change_password) {
+    return <PasswordChangeScreen passwordForm={passwordForm} setPasswordForm={setPasswordForm} onSubmit={handlePasswordChange} error={error} user={authUser} />;
+  }
 
   return (
     <div className="app-shell">
@@ -538,105 +679,63 @@ export default function App() {
         </p>
 
         <div className="tab-row">
-          <button className={`tab-btn ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>
+          <button type="button" className={`tab-btn ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>
             Dashboard
           </button>
-          <button
-            className={`tab-btn ${activeTab === "admin" ? "active" : ""}`}
-            onClick={() => {
-              setActiveTab("admin");
-              loadAdminData();
-            }}
-          >
-            Admin
-          </button>
+          {canAccessAdmin ? (
+            <button type="button" className={`tab-btn ${activeTab === "admin" ? "active" : ""}`} onClick={() => { setActiveTab("admin"); loadAdminData(); }}>
+              Admin
+            </button>
+          ) : null}
         </div>
 
         <div className="control-card">
-          <label>
-            Role View
-            <select value={role} onChange={(event) => setRole(event.target.value)}>
-              {roleOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="session-card">
+            <div>
+              <strong>{authUser.name}</strong>
+              <p className="session-meta">{roleOptions.find((option) => option.value === authUser.role)?.label} | {authUser.email}</p>
+            </div>
+            <button type="button" className="secondary-btn" onClick={handleLogout}>Sign Out</button>
+          </div>
 
           <label>
             Search
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  loadDashboard(role, event.currentTarget.value);
-                }
-              }}
               placeholder="Stock #, make, model, color..."
             />
           </label>
 
-          <button className="secondary-btn" onClick={() => loadDashboard(role, search)}>
+          <button type="button" className="secondary-btn" onClick={() => loadDashboard(search)}>
             Refresh Dashboard
+          </button>
+
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={() => {
+              setSuccessMessage("");
+              setError("");
+              setSubmission((current) => ({
+                ...current,
+                submitted_by_user_id: role === "manager" ? (current.submitted_by_user_id || authUser.id) : authUser.id
+              }));
+              setShowSubmissionModal(true);
+            }}
+          >
+            New Get Ready
           </button>
         </div>
 
-        <form className="control-card" onSubmit={createVehicle}>
-          <div className="section-heading">
-            <h2>New Submission</h2>
-          </div>
-          <label>
-            Stock Number
-            <input value={submission.stock_number} onChange={(event) => setSubmission((current) => ({ ...current, stock_number: event.target.value }))} required />
-          </label>
-          <label>
-            Year
-            <input type="number" value={submission.year} onChange={(event) => setSubmission((current) => ({ ...current, year: event.target.value }))} required />
-          </label>
-          <label>
-            Model
-            <input value={submission.model} onChange={(event) => setSubmission((current) => ({ ...current, model: event.target.value }))} required />
-          </label>
-          <label>
-            Color
-            <input value={submission.color} onChange={(event) => setSubmission((current) => ({ ...current, color: event.target.value }))} />
-          </label>
-          <label>
-            Due Date
-            <input type="datetime-local" value={submission.due_date} onChange={(event) => setSubmission((current) => ({ ...current, due_date: event.target.value }))} required />
-          </label>
-          <label><input type="checkbox" checked={submission.needs_service} onChange={(event) => setSubmission((current) => ({ ...current, needs_service: event.target.checked }))} /> Needs Service</label>
-          {submission.needs_service ? (
-            <label>
-              Service Notes
-              <input value={submission.service_notes} onChange={(event) => setSubmission((current) => ({ ...current, service_notes: event.target.value }))} placeholder="Enter service notes..." />
-            </label>
-          ) : null}
-          <label><input type="checkbox" checked={submission.needs_bodywork} onChange={(event) => setSubmission((current) => ({ ...current, needs_bodywork: event.target.checked }))} /> Needs Body Work</label>
-          {submission.needs_bodywork ? (
-            <label>
-              Body Work Notes
-              <input value={submission.bodywork_notes} onChange={(event) => setSubmission((current) => ({ ...current, bodywork_notes: event.target.value }))} placeholder="Enter body work notes..." />
-            </label>
-          ) : null}
-          <label><input type="checkbox" checked={submission.qc_required} onChange={(event) => setSubmission((current) => ({ ...current, qc_required: event.target.checked }))} /> QC Required</label>
-          <label>
-            Notes
-            <input value={submission.notes} onChange={(event) => setSubmission((current) => ({ ...current, notes: event.target.value }))} />
-          </label>
-          <button className="primary-btn" type="submit">Submit Unit</button>
-        </form>
-
-        {summary && (
+        {summary ? (
           <div className="summary-grid">
             <StatCard label="Needs My Action" value={summary.needsAction} />
             <StatCard label="Overdue" value={summary.overdue} danger />
             <StatCard label="Ready" value={summary.ready} />
             <StatCard label="Total Units" value={summary.total} />
           </div>
-        )}
+        ) : null}
 
         <div className="calendar-card">
           <div className="section-heading">
@@ -644,7 +743,7 @@ export default function App() {
           </div>
           <div className="calendar-list">
             {calendarItems.map((item) => (
-              <button key={item.id} className={`calendar-item ${item.overdue ? "danger" : ""}`} onClick={() => openVehicle(item.id)}>
+              <button type="button" key={item.id} className={`calendar-item ${item.overdue ? "danger" : ""}`} onClick={() => openVehicle(item.id)}>
                 <span>{item.title}</span>
                 <strong>{fmtDate(item.due_date)}</strong>
               </button>
@@ -655,270 +754,367 @@ export default function App() {
 
       <main className="workspace">
         {activeTab === "dashboard" ? (
-        <>
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Role Dashboard</p>
-              <h2>{roleOptions.find((option) => option.value === role)?.label} Next Actions</h2>
-            </div>
-            <span className="pill">{activeUser ? activeUser.name : "Unassigned"}</span>
-          </div>
-
-          {error ? <div className="error-banner">{error}</div> : null}
-
-          {actionSections.length > 0 ? (
-            <div className="action-sections">
-              {actionSections.map((section) => (
-                <div key={section.label} className="action-section">
-                  <div className="action-section-head">
-                    <h3>{section.label}</h3>
-                    <span className="pill">{section.items.length}</span>
-                  </div>
-                  <div className="vehicle-grid">
-                    {section.items.map((vehicle) => (
-                      <button key={vehicle.id} className={`vehicle-card ${isOverdue(vehicle.due_date) && vehicle.status !== "ready" ? "overdue" : ""} actionable`} onClick={() => openVehicle(vehicle.id)}>
-                        <div className="vehicle-topline">
-                          <span className="stock">{vehicle.stock_number}</span>
-                          <span className={`status-chip ${getTimeLeftTone(vehicle.due_date)}`}>
-                            {getTimeLeftLabel(vehicle.due_date)}
-                          </span>
-                        </div>
-                        <h3>
-                          {vehicle.year} {vehicle.make} {vehicle.model}
-                        </h3>
-                        <p>{vehicle.color}</p>
-                        <div className="meta-row">
-                          <span>Due {fmtDate(vehicle.due_date)}</span>
-                          <span>{vehicle.current_location}</span>
-                        </div>
-                        {role === "detailer" ? (
-                          <div className={`time-left-chip ${getTimeLeftTone(vehicle.due_date)}`}>
-                            {getTimeLeftLabel(vehicle.due_date)}
-                          </div>
-                        ) : null}
-                        <div className="workflow-row">
-                          {getWorkflowBadges(vehicle).map((badge) => (
-                            <Flag key={`${vehicle.id}-${badge}`} label={badge} />
-                          ))}
-                        </div>
-                        <div className="flag-row">
-                          {!vehicle.recall_checked ? <Flag label="Recall Open" muted /> : null}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+          <>
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Role Dashboard</p>
+                  <h2>{roleOptions.find((option) => option.value === role)?.label} Next Actions</h2>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-inline">No units are waiting on this role right now.</div>
-          )}
-        </section>
+                <span className="pill">{authUser.name}</span>
+              </div>
 
-        <section className="panel manager-panel">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Manager View</p>
-              <h2>Pipeline Board</h2>
-            </div>
-          </div>
-          <div className="kanban">
-            {pipelineColumns.map((column) => (
-              <div key={column} className="kanban-column">
-                <div className="kanban-header">
-                  <h3>{column}</h3>
-                  <span>{grouped[column]?.length ?? 0}</span>
+              {role === "salesperson" ? (
+                <div className="view-toggle">
+                  <button type="button" className={`tab-btn ${salespersonView === "mine" ? "active" : ""}`} onClick={() => setSalespersonView("mine")}>
+                    Just Mine
+                  </button>
+                  <button type="button" className={`tab-btn ${salespersonView === "all" ? "active" : ""}`} onClick={() => setSalespersonView("all")}>
+                    Everyone
+                  </button>
                 </div>
-                <div className="kanban-stack">
-                  {(grouped[column] ?? []).map((vehicle) => (
-                    <button key={vehicle.id} className="kanban-card" onClick={() => openVehicle(vehicle.id)}>
-                      <strong>{vehicle.stock_number}</strong>
-                      <span>{vehicle.make} {vehicle.model}</span>
-                    </button>
+              ) : null}
+
+              {error ? <div className="error-banner">{error}</div> : null}
+              {successMessage ? <div className="success-banner">{successMessage}</div> : null}
+              {temporaryPassword ? <div className="temp-password-banner">{temporaryPassword}</div> : null}
+
+              {actionSections.length > 0 ? (
+                <div className="action-sections">
+                  {actionSections.map((section) => (
+                    <div key={section.label} className="action-section">
+                      <div className="action-section-head">
+                        <h3>{section.label}</h3>
+                        <span className="pill">{section.items.length}</span>
+                      </div>
+                      <div className="vehicle-grid">
+                        {section.items.map((vehicle) => (
+                          <button type="button" key={vehicle.id} className={`vehicle-card ${isOverdue(vehicle.due_date) && vehicle.status !== "ready" ? "overdue" : ""} actionable`} onClick={() => openVehicle(vehicle.id)}>
+                            <div className="vehicle-topline">
+                              <span className="stock">{vehicle.stock_number}</span>
+                              <span className={`status-chip ${getTimeLeftTone(vehicle.due_date)}`}>{getTimeLeftLabel(vehicle.due_date)}</span>
+                            </div>
+                            <h3>{vehicle.year} {vehicle.make} {vehicle.model}</h3>
+                            <p>{vehicle.color}</p>
+                            <div className="meta-row">
+                              <span>Due {fmtDate(vehicle.due_date)}</span>
+                              <span>{vehicle.current_location}</span>
+                            </div>
+                            {role === "detailer" ? <div className={`time-left-chip ${getTimeLeftTone(vehicle.due_date)}`}>{getTimeLeftLabel(vehicle.due_date)}</div> : null}
+                            <div className="workflow-row">
+                              {getWorkflowBadges(vehicle).map((badge) => <Flag key={`${vehicle.id}-${badge}`} label={badge} />)}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
-              </div>
-            ))}
-          </div>
-        </section>
-        </>
+              ) : !showSalespersonSubmissionSection ? (
+                <div className="empty-inline">No units are waiting on your role right now.</div>
+              ) : null}
+
+              {showSalespersonSubmissionSection ? (
+                <div className="action-sections submission-section">
+                  <div className="action-section">
+                    <div className="action-section-head">
+                      <h3>My Get Readies</h3>
+                      <span className="pill">{mySubmittedVehicles.length}</span>
+                    </div>
+                    <div className="vehicle-grid">
+                      {mySubmittedVehicles.map((vehicle) => (
+                        <button type="button" key={`submitted-${vehicle.id}`} className={`vehicle-card ${isOverdue(vehicle.due_date) && vehicle.status !== "ready" ? "overdue" : ""}`} onClick={() => openVehicle(vehicle.id)}>
+                          <div className="vehicle-topline">
+                            <span className="stock">{vehicle.stock_number}</span>
+                            <span className={`status-chip ${getTimeLeftTone(vehicle.due_date)}`}>{getTimeLeftLabel(vehicle.due_date)}</span>
+                          </div>
+                          <h3>{vehicle.year} {vehicle.make} {vehicle.model}</h3>
+                          <p>{vehicle.color}</p>
+                          <div className="meta-row">
+                            <span>Due {fmtDate(vehicle.due_date)}</span>
+                            <span>{vehicle.current_location}</span>
+                          </div>
+                          <div className="workflow-row">
+                            {getWorkflowBadges(vehicle).map((badge) => <Flag key={`submission-${vehicle.id}-${badge}`} label={badge} />)}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </section>
+
+            {role === "manager" ? (
+              <section className="panel manager-panel">
+                <div className="section-heading">
+                  <div>
+                    <p className="eyebrow">Manager View</p>
+                    <h2>Pipeline Board</h2>
+                  </div>
+                </div>
+                <div className="kanban">
+                  {pipelineColumns.map((column) => (
+                    <div key={column} className="kanban-column">
+                      <div className="kanban-header">
+                        <h3>{column}</h3>
+                        <span>{grouped[column]?.length ?? 0}</span>
+                      </div>
+                      <div className="kanban-stack">
+                        {(grouped[column] ?? []).map((vehicle) => (
+                          <button type="button" key={vehicle.id} className="kanban-card" onClick={() => openVehicle(vehicle.id)}>
+                            <strong>{vehicle.stock_number}</strong>
+                            <span>{vehicle.make} {vehicle.model}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </>
         ) : (
-        <>
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Admin</p>
-              <h2>Administration</h2>
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Admin</p>
+                <h2>Administration</h2>
+              </div>
+              <button type="button" className="secondary-btn" onClick={loadAdminData}>Refresh Admin Data</button>
             </div>
-            <button className="secondary-btn" onClick={loadAdminData}>Refresh Admin Data</button>
-          </div>
 
-          <div className="admin-nav">
-            <button className={`tab-btn ${adminSection === "steps" ? "active" : ""}`} onClick={() => setAdminSection("steps")}>
-              Step Labels
-            </button>
-            <button className={`tab-btn ${adminSection === "users" ? "active" : ""}`} onClick={() => setAdminSection("users")}>
-              Users
-            </button>
-            <button className={`tab-btn ${adminSection === "audit" ? "active" : ""}`} onClick={() => setAdminSection("audit")}>
-              Audit
-            </button>
-          </div>
+            {temporaryPassword ? <div className="temp-password-banner">{temporaryPassword}</div> : null}
 
-          {adminSection === "steps" ? (
-            <div className="admin-list">
-              {adminActions.map((action) => (
-                <div key={action.key} className="admin-card">
+            <div className="admin-nav">
+              <button type="button" className={`tab-btn ${adminSection === "steps" ? "active" : ""}`} onClick={() => setAdminSection("steps")}>Step Labels</button>
+              <button type="button" className={`tab-btn ${adminSection === "users" ? "active" : ""}`} onClick={() => setAdminSection("users")}>Users</button>
+              <button type="button" className={`tab-btn ${adminSection === "audit" ? "active" : ""}`} onClick={() => setAdminSection("audit")}>Audit</button>
+            </div>
+
+            {adminSection === "steps" ? (
+              <div className="admin-list">
+                {adminActions.map((action) => (
+                  <div key={action.key} className="admin-card">
+                    <div className="admin-card-head">
+                      <strong>{action.key}</strong>
+                      <label className="toggle-line">
+                        <input type="checkbox" checked={action.enabled} onChange={(event) => updateAdminAction(action.key, { enabled: event.target.checked })} />
+                        Enabled
+                      </label>
+                    </div>
+                    <label>
+                      Action Label
+                      <input
+                        value={action.label}
+                        onChange={(event) => setAdminActions((current) => current.map((item) => item.key === action.key ? { ...item, label: event.target.value } : item))}
+                        onBlur={(event) => updateAdminAction(action.key, { label: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Assigned Role
+                      <select value={action.role} onChange={(event) => updateAdminAction(action.key, { role: event.target.value })}>
+                        {roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
+                    <p className="admin-meta">Type: {action.type}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {adminSection === "users" ? (
+              <div className="admin-list">
+                <form className="admin-card" onSubmit={createAdminUser}>
                   <div className="admin-card-head">
-                    <strong>{action.key}</strong>
+                    <strong>Add User</strong>
+                  </div>
+                  <label>
+                    Name
+                    <input value={newUser.name} onChange={(event) => setNewUser((current) => ({ ...current, name: event.target.value }))} required />
+                  </label>
+                  <label>
+                    Email
+                    <input type="email" value={newUser.email} onChange={(event) => setNewUser((current) => ({ ...current, email: event.target.value }))} required />
+                  </label>
+                  <label>
+                    Role
+                    <select value={newUser.role} onChange={(event) => setNewUser((current) => ({ ...current, role: event.target.value }))}>
+                      {roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </label>
+                  <button className="primary-btn" type="submit">Create User</button>
+                </form>
+
+                {users.map((managedUser) => (
+                  <div key={managedUser.id} className="admin-card">
+                    <div className="admin-card-head">
+                      <div>
+                        <strong>{managedUser.name}</strong>
+                        <p className="admin-meta">{roleOptions.find((option) => option.value === managedUser.role)?.label} | {managedUser.email}</p>
+                      </div>
+                      <button type="button" className="secondary-btn" onClick={() => resetAdminPassword(managedUser.id, managedUser.email)}>Reset Password</button>
+                    </div>
+                    <label>
+                      Name
+                      <input defaultValue={managedUser.name} onBlur={(event) => updateAdminUser(managedUser.id, { name: event.target.value })} />
+                    </label>
+                    <label>
+                      Email
+                      <input defaultValue={managedUser.email} onBlur={(event) => updateAdminUser(managedUser.id, { email: event.target.value })} />
+                    </label>
+                    <label>
+                      Role
+                      <select
+                        value={managedUser.role}
+                        onChange={(event) => {
+                          const roleValue = event.target.value;
+                          setUsers((current) => current.map((item) => item.id === managedUser.id ? { ...item, role: roleValue } : item));
+                          updateAdminUser(managedUser.id, { role: roleValue });
+                        }}
+                      >
+                        {roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </label>
                     <label className="toggle-line">
                       <input
                         type="checkbox"
-                        checked={action.enabled}
-                        onChange={(event) => updateAdminAction(action.key, { enabled: event.target.checked })}
+                        checked={managedUser.is_active}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setUsers((current) => current.map((item) => item.id === managedUser.id ? { ...item, is_active: checked } : item));
+                          updateAdminUser(managedUser.id, { is_active: checked });
+                        }}
                       />
-                      Enabled
+                      Active
                     </label>
                   </div>
-                  <label>
-                    Action Label
-                    <input
-                      value={action.label}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        setAdminActions((current) =>
-                          current.map((item) => item.key === action.key ? { ...item, label: value } : item)
-                        );
-                      }}
-                      onBlur={(event) => updateAdminAction(action.key, { label: event.target.value })}
-                    />
-                  </label>
-                  <label>
-                    Assigned Role
-                    <select
-                      value={action.role}
-                      onChange={(event) => updateAdminAction(action.key, { role: event.target.value })}
-                    >
-                      {roleOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="admin-meta">Type: {action.type}</p>
-                </div>
-              ))}
-            </div>
-          ) : null}
+                ))}
+              </div>
+            ) : null}
 
-          {adminSection === "users" ? (
-            <div className="admin-list">
-              <form className="admin-card" onSubmit={createAdminUser}>
-                <div className="admin-card-head">
-                  <strong>Add User</strong>
-                </div>
+            {adminSection === "audit" ? (
+              <div className="audit-feed">
+                {auditFeed.map((entry) => (
+                  <div key={entry.id} className="audit-row">
+                    <strong>{fmtDate(entry.created_at)}</strong>
+                    <span>{entry.user?.name ?? "Unknown User"}</span>
+                    <span>{entry.vehicle?.stock_number ?? "System"}</span>
+                    <p>{entry.field_changed.replaceAll("_", " ")}: {String(entry.old_value || "empty")} to {String(entry.new_value || "empty")}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        )}
+      </main>
+
+      {canAccessAdmin ? (
+        <div className="mobile-tabbar">
+          <button type="button" className={`tab-btn ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>Dashboard</button>
+          <button type="button" className={`tab-btn ${activeTab === "admin" ? "active" : ""}`} onClick={() => { setActiveTab("admin"); loadAdminData(); }}>Admin</button>
+        </div>
+      ) : null}
+
+      {showSubmissionModal ? (
+        <div className="detail-overlay">
+          <section className="detail-modal submission-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">New Get Ready</p>
+                <h2>Submit Unit</h2>
+              </div>
+              <button type="button" className="secondary-btn" onClick={() => setShowSubmissionModal(false)}>Close</button>
+            </div>
+
+            <form className="control-card modal-form" onSubmit={createVehicle}>
+              <label>
+                Salesperson
+                {role === "manager" ? (
+                  <select
+                    value={submission.submitted_by_user_id || authUser.id}
+                    onChange={(event) => setSubmission((current) => ({ ...current, submitted_by_user_id: event.target.value }))}
+                  >
+                    {salespersonUsers.map((user) => (
+                      <option key={user.id} value={user.id}>{user.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input value={authUser.name} readOnly />
+                )}
+              </label>
+
+              {role === "manager" ? (
                 <label>
-                  Name
-                  <input value={newUser.name} onChange={(event) => setNewUser((current) => ({ ...current, name: event.target.value }))} required />
-                </label>
-                <label>
-                  Role
-                  <select value={newUser.role} onChange={(event) => setNewUser((current) => ({ ...current, role: event.target.value }))}>
-                    {roleOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
+                  Assigned User
+                  <select
+                    value={submission.assigned_user_id}
+                    onChange={(event) => setSubmission((current) => ({ ...current, assigned_user_id: event.target.value }))}
+                  >
+                    <option value="">Unassigned</option>
+                    {assignableUsers.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.name} | {roleOptions.find((option) => option.value === user.role)?.label}
                       </option>
                     ))}
                   </select>
                 </label>
-                <button className="primary-btn" type="submit">Create User</button>
-              </form>
+              ) : null}
 
-              {users.map((managedUser) => (
-                <div key={managedUser.id} className="admin-card">
-                  <div className="admin-card-head">
-                    <strong>{managedUser.name}</strong>
-                  </div>
-                  <label>
-                    Name
-                    <input
-                      defaultValue={managedUser.name}
-                      onBlur={(event) => updateAdminUser(managedUser.id, { name: event.target.value })}
-                    />
-                  </label>
-                  <label>
-                    Role
-                    <select
-                      value={managedUser.role}
-                      onChange={(event) => {
-                        const roleValue = event.target.value;
-                        setUsers((current) => current.map((item) => item.id === managedUser.id ? { ...item, role: roleValue } : item));
-                        updateAdminUser(managedUser.id, { role: roleValue });
-                      }}
-                    >
-                      {roleOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          {adminSection === "audit" ? (
-            <div className="audit-feed">
-              {auditFeed.map((entry) => (
-                <div key={entry.id} className="audit-row">
-                  <strong>{fmtDate(entry.created_at)}</strong>
-                  <span>{entry.user?.name ?? "Unknown User"}</span>
-                  <span>{entry.vehicle?.stock_number ?? "System"}</span>
-                  <p>
-                    {entry.field_changed.replaceAll("_", " ")}: {String(entry.old_value || "empty")} to {String(entry.new_value || "empty")}
-                  </p>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </section>
-        </>
-        )}
-      </main>
-
-      <div className="mobile-tabbar">
-        <button className={`tab-btn ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>
-          Dashboard
-        </button>
-        <button
-          className={`tab-btn ${activeTab === "admin" ? "active" : ""}`}
-          onClick={() => {
-            setActiveTab("admin");
-            loadAdminData();
-          }}
-        >
-          Admin
-        </button>
-      </div>
+              <label>
+                Stock Number
+                <input value={submission.stock_number} onChange={(event) => setSubmission((current) => ({ ...current, stock_number: event.target.value }))} required />
+              </label>
+              <label>
+                Year
+                <input type="number" value={submission.year} onChange={(event) => setSubmission((current) => ({ ...current, year: event.target.value }))} required />
+              </label>
+              <label>
+                Model
+                <input value={submission.model} onChange={(event) => setSubmission((current) => ({ ...current, model: event.target.value }))} required />
+              </label>
+              <label>
+                Color
+                <input value={submission.color} onChange={(event) => setSubmission((current) => ({ ...current, color: event.target.value }))} />
+              </label>
+              <label>
+                Due Date
+                <input type="datetime-local" value={submission.due_date} onChange={(event) => setSubmission((current) => ({ ...current, due_date: event.target.value }))} required />
+              </label>
+              <label><input type="checkbox" checked={submission.needs_service} onChange={(event) => setSubmission((current) => ({ ...current, needs_service: event.target.checked }))} /> Needs Service</label>
+              {submission.needs_service ? (
+                <label>
+                  Service Notes
+                  <input value={submission.service_notes} onChange={(event) => setSubmission((current) => ({ ...current, service_notes: event.target.value }))} placeholder="Enter service notes..." />
+                </label>
+              ) : null}
+              <label><input type="checkbox" checked={submission.needs_bodywork} onChange={(event) => setSubmission((current) => ({ ...current, needs_bodywork: event.target.checked }))} /> Needs Body Work</label>
+              {submission.needs_bodywork ? (
+                <label>
+                  Body Work Notes
+                  <input value={submission.bodywork_notes} onChange={(event) => setSubmission((current) => ({ ...current, bodywork_notes: event.target.value }))} placeholder="Enter body work notes..." />
+                </label>
+              ) : null}
+              <label><input type="checkbox" checked={submission.qc_required} onChange={(event) => setSubmission((current) => ({ ...current, qc_required: event.target.checked }))} /> QC Required</label>
+              <label>
+                Notes
+                <input value={submission.notes} onChange={(event) => setSubmission((current) => ({ ...current, notes: event.target.value }))} />
+              </label>
+              <button className="primary-btn" type="submit">Submit Unit</button>
+            </form>
+          </section>
+        </div>
+      ) : null}
 
       {selectedVehicle ? (
-        <div className="detail-overlay" onClick={() => {
-          setSelectedVehicle(null);
-        }}>
+        <div className="detail-overlay">
           <section className="detail-modal" onClick={(event) => event.stopPropagation()}>
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Vehicle Detail</p>
-                <h2>
-                  {selectedVehicle.stock_number} | {selectedVehicle.year} {selectedVehicle.make} {selectedVehicle.model}
-                </h2>
+                <h2>{selectedVehicle.stock_number} | {selectedVehicle.year} {selectedVehicle.make} {selectedVehicle.model}</h2>
               </div>
-              <button className="secondary-btn" onClick={() => {
-                setSelectedVehicle(null);
-              }}>Close</button>
+              <button type="button" className="secondary-btn" onClick={() => setSelectedVehicle(null)}>Close</button>
             </div>
 
             <div className="detail-card">
@@ -927,12 +1123,8 @@ export default function App() {
               <p><strong>Due:</strong> {fmtDate(selectedVehicle.due_date)}</p>
               <p><strong>Assigned Role:</strong> {selectedVehicle.assigned_role?.replaceAll("_", " ") ?? "Complete"}</p>
               <p><strong>Notes:</strong> {selectedVehicle.notes || "None"}</p>
-              {selectedVehicle.needs_service ? (
-                <p><strong>{getServiceDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.service_notes || "No service notes"}</p>
-              ) : null}
-              {selectedVehicle.needs_bodywork ? (
-                <p><strong>{getBodyworkDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.bodywork_notes || "No body work notes"}</p>
-              ) : null}
+              {selectedVehicle.needs_service ? <p><strong>{getServiceDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.service_notes || "No service notes"}</p> : null}
+              {selectedVehicle.needs_bodywork ? <p><strong>{getBodyworkDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.bodywork_notes || "No body work notes"}</p> : null}
               {selectedVehicle.blockers.length > 0 ? <p><strong>Blocking Issues:</strong> {selectedVehicle.blockers.join(" ")}</p> : null}
             </div>
 
@@ -941,76 +1133,14 @@ export default function App() {
               <div className="action-grid">
                 {roleSpecificActions.length > 0 ? roleSpecificActions.map((action) => (
                   <button
+                    type="button"
                     key={action.key}
                     className="next-step-btn"
-                    onClick={() => {
-                      if (action.key === "toggle_fueled") return updateFlags(selectedVehicle.id, { fueled: true });
-                      if (action.key === "toggle_recall") return updateFlags(selectedVehicle.id, { recall_checked: true });
-                      if (action.key === "complete_recall") return updateFlags(selectedVehicle.id, { recall_completed: true });
-                      if (action.key === "start_service") return updateFlags(selectedVehicle.id, { service_status: "in_progress" });
-                      if (action.key === "complete_service") return updateFlags(selectedVehicle.id, { service_status: "completed" });
-                      if (action.key === "start_bodywork") return updateFlags(selectedVehicle.id, { bodywork_status: "in_progress" });
-                      if (action.key === "complete_bodywork") return updateFlags(selectedVehicle.id, { bodywork_status: "completed" });
-                      if (action.key === "complete_qc") return updateFlags(selectedVehicle.id, { qc_completed: true });
-                      return updateStatus(selectedVehicle.id, action.key);
-                    }}
+                    onClick={() => performAction(selectedVehicle.id, action.key, updateStatus, updateFlags)}
                   >
                     {action.label}
                   </button>
-                )) : <p className="step-helper">No action is waiting on this role right now.</p>}
-              </div>
-            </div>
-
-            <div className="detail-card">
-              <h3>Steps</h3>
-              <div className="step-list">
-                {statusSequence
-                  .filter((step) => {
-                    if (step.key === "complete_service") return selectedVehicle.needs_service;
-                    if (step.key === "start_service") return selectedVehicle.needs_service;
-                    if (step.key === "open_recall") return true;
-                    if (step.key === "complete_recall") return selectedVehicle.recall_open || selectedVehicle.recall_completed;
-                    if (step.key === "complete_bodywork") return selectedVehicle.needs_bodywork;
-                    if (step.key === "start_bodywork") return selectedVehicle.needs_bodywork;
-                    if (step.key === "complete_qc") return selectedVehicle.qc_required;
-                    return true;
-                  })
-                  .map((step) => {
-                    const state = getStepState(selectedVehicle, step);
-                    const latestChange = getLatestChangeForStep(selectedVehicle, step);
-                    const disabled = state.completed || !state.available;
-
-                    return (
-                      <div key={step.key} className={`step-row ${state.completed ? "completed" : ""}`}>
-                        <div className="step-copy">
-                          <strong>{step.label}</strong>
-                          <span>
-                            {latestChange
-                              ? `${latestChange.user?.name ?? "Unknown User"} | ${fmtDate(latestChange.created_at)}`
-                              : "No completion recorded yet"}
-                          </span>
-                        </div>
-                        <button
-                          className={`slider-btn ${state.completed ? "done" : ""}`}
-                          disabled={disabled}
-                          onClick={() => {
-                            if (step.key === "toggle_fueled") return updateFlags(selectedVehicle.id, { fueled: true });
-                            if (step.key === "toggle_recall") return updateFlags(selectedVehicle.id, { recall_checked: true });
-                            if (step.key === "open_recall") return updateFlags(selectedVehicle.id, { recall_open: true });
-                            if (step.key === "complete_recall") return updateFlags(selectedVehicle.id, { recall_completed: true });
-                            if (step.key === "start_service") return updateFlags(selectedVehicle.id, { service_status: "in_progress" });
-                            if (step.key === "complete_service") return updateFlags(selectedVehicle.id, { service_status: "completed" });
-                            if (step.key === "start_bodywork") return updateFlags(selectedVehicle.id, { bodywork_status: "in_progress" });
-                            if (step.key === "complete_bodywork") return updateFlags(selectedVehicle.id, { bodywork_status: "completed" });
-                            if (step.key === "complete_qc") return updateFlags(selectedVehicle.id, { qc_completed: true });
-                            return updateStatus(selectedVehicle.id, step.key);
-                          }}
-                        >
-                          <span className="slider-thumb" />
-                        </button>
-                      </div>
-                    );
-                  })}
+                )) : <p className="step-helper">No action is waiting on your role right now.</p>}
               </div>
             </div>
 
@@ -1021,9 +1151,7 @@ export default function App() {
                   <div key={entry.id} className="timeline-item">
                     <strong>{fmtDate(entry.created_at)}</strong>
                     <span>{entry.user?.name ?? "Unknown User"}</span>
-                    <p>
-                      {formatFieldLabel(entry.field_changed)}: {String(entry.old_value || "empty")} to {String(entry.new_value || "empty")}
-                    </p>
+                    <p>{formatFieldLabel(entry.field_changed)}: {String(entry.old_value || "empty")} to {String(entry.new_value || "empty")}</p>
                   </div>
                 ))}
               </div>
