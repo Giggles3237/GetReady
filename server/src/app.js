@@ -122,6 +122,7 @@ function normalizeVehicle(row) {
   return {
     ...row,
     year: Number(row.year),
+    is_archived: Boolean(row.is_archived),
     needs_service: Boolean(row.needs_service),
     needs_bodywork: Boolean(row.needs_bodywork),
     recall_checked: Boolean(row.recall_checked),
@@ -156,6 +157,7 @@ function decorateAuditEntry(entry, usersById, vehiclesById) {
 function decorateVehicle(vehicle, usersById, timelineEntries, actionDefinitions, currentUserId = null) {
   const currentUserRole = currentUserId ? usersById.get(currentUserId)?.role ?? null : null;
   const actions = buildActionList(vehicle, actionDefinitions, currentUserId, currentUserRole);
+  const completionEntry = timelineEntries.find((entry) => entry.field_changed === "status" && String(entry.new_value).toLowerCase() === "ready") ?? null;
   return {
     ...vehicle,
     assigned_role: deriveAssignedRole(vehicle),
@@ -164,6 +166,7 @@ function decorateVehicle(vehicle, usersById, timelineEntries, actionDefinitions,
     blockers: computeBlockingIssues(vehicle),
     assigned_user: vehicle.assigned_user_id ? usersById.get(vehicle.assigned_user_id) ?? null : null,
     submitted_by: vehicle.submitted_by_user_id ? usersById.get(vehicle.submitted_by_user_id) ?? null : null,
+    completion_entry: completionEntry,
     timeline: timelineEntries
   };
 }
@@ -661,9 +664,25 @@ app.get("/api/vehicles", async (req, res) => {
   const usersById = new Map(users.map((user) => [user.id, sanitizeUser(user)]));
   const actionDefinitions = actionDefinitionsRaw.map(normalizeActionDefinition);
   const filteredRows = vehiclesRaw.map(normalizeVehicle);
-  const decorated = filteredRows.map((vehicle) => decorateVehicle(vehicle, usersById, [], actionDefinitions, req.currentUser.id));
+  const auditEntries = await listAuditEntries({ limit: 1000 });
+  const timelineByVehicleId = new Map();
+  auditEntries.forEach((entry) => {
+    if (!entry.vehicle_id) {
+      return;
+    }
 
-  let filtered = decorated.filter((vehicle) =>
+    if (!timelineByVehicleId.has(entry.vehicle_id)) {
+      timelineByVehicleId.set(entry.vehicle_id, []);
+    }
+
+    timelineByVehicleId.get(entry.vehicle_id).push(decorateAuditEntry(entry, usersById, new Map()));
+  });
+
+  const decorated = filteredRows.map((vehicle) =>
+    decorateVehicle(vehicle, usersById, timelineByVehicleId.get(vehicle.id) ?? [], actionDefinitions, req.currentUser.id)
+  );
+
+  let filtered = decorated.filter((vehicle) => !vehicle.is_archived).filter((vehicle) =>
     getQueueForRole(vehicle, role, actionDefinitions, req.currentUser.id) ||
     (role === "manager" && vehicle.assigned_role === role) ||
     (role === "salesperson" && (includeAllSalespersonVehicles || vehicle.submitted_by_user_id === req.currentUser.id)) ||
@@ -705,6 +724,31 @@ app.get("/api/vehicles/:id", async (req, res) => {
   const timeline = auditEntries.map((entry) => decorateAuditEntry(entry, usersById, vehiclesById));
 
   res.json({ vehicle: decorateVehicle(vehicle, usersById, timeline, actionDefinitions, req.currentUser.id) });
+});
+
+app.patch("/api/vehicles/:id/archive", requireManager, async (req, res) => {
+  const vehicleRow = await getVehicle(req.params.id);
+
+  if (!vehicleRow) {
+    return res.status(404).json({ message: "Vehicle not found." });
+  }
+
+  const vehicle = normalizeVehicle(vehicleRow);
+  if (vehicle.is_archived) {
+    return res.status(400).json({ message: "This vehicle has already been archived." });
+  }
+
+  const nextVehicle = await updateVehicleWithAudit(
+    vehicle.id,
+    {
+      is_archived: true,
+      archived_at: new Date().toISOString()
+    },
+    req.currentUser.id,
+    "vehicle_archived"
+  );
+
+  res.json({ vehicle: nextVehicle });
 });
 
 app.post("/api/vehicles", async (req, res) => {
@@ -906,6 +950,7 @@ app.get("/api/dashboard/summary", async (req, res) => {
   const actionDefinitions = actionDefinitionsRaw.map(normalizeActionDefinition);
   const vehicles = vehiclesRaw
     .map(normalizeVehicle)
+    .filter((vehicle) => !vehicle.is_archived)
     .filter((vehicle) => role !== "salesperson" || includeAllSalespersonVehicles || vehicle.submitted_by_user_id === req.currentUser.id);
   const now = Date.now();
 
@@ -926,6 +971,7 @@ app.get("/api/dashboard/summary", async (req, res) => {
 app.get("/api/dashboard/calendar", async (_req, res) => {
   const items = (await listVehicles())
     .map(normalizeVehicle)
+    .filter((vehicle) => !vehicle.is_archived)
     .sort((a, b) => new Date(a.due_date).getTime() - new Date(b.due_date).getTime())
     .map((vehicle) => ({
       id: vehicle.id,

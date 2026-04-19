@@ -8,7 +8,8 @@
     "start": "node src/app.js",
     "seed:demo": "node scripts/seed-demo.js",
     "migrate:auth": "node scripts/migrate-auth.js",
-    "migrate:admin-role": "node scripts/migrate-admin-role.js"
+    "migrate:admin-role": "node scripts/migrate-admin-role.js",
+    "migrate:vehicle-archive": "node scripts/migrate-vehicle-archive.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

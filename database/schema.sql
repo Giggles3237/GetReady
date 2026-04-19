@@ -47,6 +47,8 @@ CREATE TABLE vehicles (
   service_notes TEXT NULL,
   bodywork_notes TEXT NULL,
   notes TEXT NULL,
+  is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+  archived_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT fk_vehicle_assigned_user FOREIGN KEY (assigned_user_id) REFERENCES users(id),

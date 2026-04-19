@@ -33,6 +33,30 @@ function fmtDate(value) {
   });
 }
 
+function fmtDayLabel(value) {
+  return new Date(value).toLocaleDateString([], {
+    weekday: "short",
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function startOfDay(value) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function addDays(value, days) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
+function isSameDay(left, right) {
+  return startOfDay(left).getTime() === startOfDay(right).getTime();
+}
+
 function getTimeLeftLabel(value) {
   const diffMs = new Date(value).getTime() - Date.now();
   const overdue = diffMs < 0;
@@ -50,11 +74,51 @@ function getTimeLeftLabel(value) {
   return overdue ? `Overdue by ${parts.join(" ")}` : `${parts.join(" ")} left`;
 }
 
+function getFrozenTimeLeftLabel(dueDate, completedAt) {
+  const diffMs = new Date(dueDate).getTime() - new Date(completedAt).getTime();
+  const overdue = diffMs < 0;
+  const absMs = Math.abs(diffMs);
+  const totalMinutes = Math.round(absMs / 60000);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}m`);
+
+  return overdue ? `Done ${parts.join(" ")} late` : `${parts.join(" ")} early`;
+}
+
 function getTimeLeftTone(value) {
   const diffMs = new Date(value).getTime() - Date.now();
   if (diffMs < 0) return "danger";
   if (diffMs <= 1000 * 60 * 60 * 2) return "danger";
   if (diffMs <= 1000 * 60 * 60 * 8) return "warn";
+  return "normal";
+}
+
+function getVehicleTimeLabel(vehicle) {
+  if (vehicle.status === "ready" && vehicle.completion_entry?.created_at) {
+    return getFrozenTimeLeftLabel(vehicle.due_date, vehicle.completion_entry.created_at);
+  }
+
+  return getTimeLeftLabel(vehicle.due_date);
+}
+
+function getVehicleTimeTone(vehicle) {
+  if (vehicle.status === "ready" && vehicle.completion_entry?.created_at) {
+    return new Date(vehicle.due_date).getTime() - new Date(vehicle.completion_entry.created_at).getTime() < 0 ? "danger" : "normal";
+  }
+
+  return getTimeLeftTone(vehicle.due_date);
+}
+
+function getCalendarStatusTone(vehicle) {
+  if (vehicle.status === "ready") return "done";
+  if (isOverdue(vehicle.due_date)) return "danger";
+  if (vehicle.pipeline === "Service") return "warn";
   return "normal";
 }
 
@@ -210,6 +274,10 @@ function getCompletionIndicators(vehicle) {
 }
 
 function getCompletionEntry(vehicle) {
+  if (vehicle.completion_entry) {
+    return vehicle.completion_entry;
+  }
+
   if (vehicle.status !== "ready" || !vehicle.timeline) {
     return null;
   }
@@ -339,6 +407,7 @@ export default function App() {
   const [showSubmissionModal, setShowSubmissionModal] = useState(false);
   const [search, setSearch] = useState("");
   const [salespersonView, setSalespersonView] = useState("mine");
+  const [calendarView, setCalendarView] = useState("agenda");
   const [showCompleted, setShowCompleted] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -534,6 +603,21 @@ export default function App() {
     }
   }
 
+  async function archiveVehicle(vehicleId) {
+    try {
+      setError("");
+      await request(`/vehicles/${vehicleId}/archive`, {
+        method: "PATCH",
+        body: JSON.stringify({})
+      });
+      setSelectedVehicle(null);
+      await loadDashboard();
+      setSuccessMessage("Vehicle archived. Audit history was preserved.");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   async function createVehicle(event) {
     event.preventDefault();
 
@@ -697,6 +781,37 @@ export default function App() {
     () => prioritizedVehicles.filter((vehicle) => vehicle.submitted_by_user_id === authUser?.id),
     [prioritizedVehicles, authUser]
   );
+  const calendarVehicles = useMemo(
+    () => [...filteredForDisplay].sort((left, right) => getDueSortValue(left) - getDueSortValue(right)),
+    [filteredForDisplay]
+  );
+  const agendaSections = useMemo(() => {
+    const grouped = new Map();
+    calendarVehicles.forEach((vehicle) => {
+      const key = startOfDay(vehicle.due_date).toISOString();
+      if (!grouped.has(key)) {
+        grouped.set(key, []);
+      }
+      grouped.get(key).push(vehicle);
+    });
+
+    return Array.from(grouped.entries()).map(([dateKey, items]) => ({
+      dateKey,
+      label: fmtDayLabel(dateKey),
+      items
+    }));
+  }, [calendarVehicles]);
+  const weekDays = useMemo(() => {
+    const today = startOfDay(new Date());
+    return Array.from({ length: 7 }, (_, index) => {
+      const date = addDays(today, index);
+      return {
+        key: date.toISOString(),
+        label: fmtDayLabel(date),
+        items: calendarVehicles.filter((vehicle) => isSameDay(vehicle.due_date, date))
+      };
+    });
+  }, [calendarVehicles]);
   const actionSections = useMemo(() => groupVehiclesByAction(nextUpVehicles, role), [nextUpVehicles, role]);
   const availableActions = useMemo(
     () => selectedVehicle ? selectedVehicle.actions.filter((action) => action.role === role) : [],
@@ -720,16 +835,17 @@ export default function App() {
   return (
     <div className="app-shell">
       <aside className="hero-panel">
-        <p className="eyebrow">Chris Lasko</p>
-        <h1>Get Ready Tracking System</h1>
-        <p className="lead">
-          A real-time command center for moving dealership units from submission to front-line ready with clear ownership,
-          fast handoffs, and full audit accountability.
-        </p>
+        <div className="brand-bar">
+          <span className="brand-mark">BMW</span>
+          <span className="brand-title">Get Ready</span>
+        </div>
 
         <div className="tab-row">
           <button type="button" className={`tab-btn ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>
             Dashboard
+          </button>
+          <button type="button" className={`tab-btn ${activeTab === "calendar" ? "active" : ""}`} onClick={() => setActiveTab("calendar")}>
+            Calendar
           </button>
           {canAccessAdmin ? (
             <button type="button" className={`tab-btn ${activeTab === "admin" ? "active" : ""}`} onClick={() => { setActiveTab("admin"); loadAdminData(); }}>
@@ -850,7 +966,7 @@ export default function App() {
                           <button type="button" key={vehicle.id} className={`vehicle-card ${isOverdue(vehicle.due_date) && vehicle.status !== "ready" ? "overdue" : ""} actionable`} onClick={() => openVehicle(vehicle.id)}>
                             <div className="vehicle-topline">
                               <span className="stock">{vehicle.stock_number}</span>
-                              <span className={`status-chip ${getTimeLeftTone(vehicle.due_date)}`}>{getTimeLeftLabel(vehicle.due_date)}</span>
+                              <span className={`status-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</span>
                             </div>
                             <h3>{vehicle.year} {vehicle.make} {vehicle.model}</h3>
                             <p>{vehicle.color}</p>
@@ -858,7 +974,7 @@ export default function App() {
                               <span>Due {fmtDate(vehicle.due_date)}</span>
                               <span>{vehicle.current_location}</span>
                             </div>
-                            {role === "detailer" ? <div className={`time-left-chip ${getTimeLeftTone(vehicle.due_date)}`}>{getTimeLeftLabel(vehicle.due_date)}</div> : null}
+                            {role === "detailer" ? <div className={`time-left-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</div> : null}
                             <div className="workflow-row">
                               {getWorkflowBadges(vehicle).map((badge) => <Flag key={`${vehicle.id}-${badge}`} label={badge} />)}
                             </div>
@@ -884,7 +1000,7 @@ export default function App() {
                         <button type="button" key={`submitted-${vehicle.id}`} className={`vehicle-card ${isOverdue(vehicle.due_date) && vehicle.status !== "ready" ? "overdue" : ""}`} onClick={() => openVehicle(vehicle.id)}>
                           <div className="vehicle-topline">
                             <span className="stock">{vehicle.stock_number}</span>
-                            <span className={`status-chip ${getTimeLeftTone(vehicle.due_date)}`}>{getTimeLeftLabel(vehicle.due_date)}</span>
+                            <span className={`status-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</span>
                           </div>
                           <h3>{vehicle.year} {vehicle.make} {vehicle.model}</h3>
                           <p>{vehicle.color}</p>
@@ -932,6 +1048,78 @@ export default function App() {
               </section>
             ) : null}
           </>
+        ) : activeTab === "calendar" ? (
+          <section className="panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Calendar</p>
+                <h2>Due Date Calendar</h2>
+              </div>
+              <span className="pill">{calendarVehicles.length}</span>
+            </div>
+
+            <div className="view-toggle">
+              <button type="button" className={`tab-btn ${calendarView === "agenda" ? "active" : ""}`} onClick={() => setCalendarView("agenda")}>
+                Agenda
+              </button>
+              <button type="button" className={`tab-btn ${calendarView === "week" ? "active" : ""}`} onClick={() => setCalendarView("week")}>
+                7 Day
+              </button>
+              <button type="button" className={`tab-btn ${!showCompleted ? "active" : ""}`} onClick={() => setShowCompleted(false)}>
+                Incomplete Only
+              </button>
+              <button type="button" className={`tab-btn ${showCompleted ? "active" : ""}`} onClick={() => setShowCompleted(true)}>
+                Include Completed
+              </button>
+            </div>
+
+            {calendarView === "agenda" ? (
+              <div className="calendar-agenda">
+                {agendaSections.length > 0 ? agendaSections.map((section) => (
+                  <div key={section.dateKey} className="calendar-day-card">
+                    <div className="action-section-head">
+                      <h3>{section.label}</h3>
+                      <span className="pill">{section.items.length}</span>
+                    </div>
+                    <div className="calendar-entry-list">
+                      {section.items.map((vehicle) => (
+                        <button type="button" key={`agenda-${vehicle.id}`} className={`calendar-entry ${getCalendarStatusTone(vehicle)}`} onClick={() => openVehicle(vehicle.id)}>
+                          <div>
+                            <strong>{vehicle.stock_number} | {vehicle.year} {vehicle.make} {vehicle.model}</strong>
+                            <p>{vehicle.current_location} | {formatFieldLabel(vehicle.status)}</p>
+                          </div>
+                          <div className="calendar-entry-meta">
+                            <span>{fmtDate(vehicle.due_date)}</span>
+                            <span className={`status-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )) : <div className="empty-inline">No units match the current calendar filters.</div>}
+              </div>
+            ) : (
+              <div className="calendar-week-grid">
+                {weekDays.map((day) => (
+                  <div key={day.key} className="calendar-week-column">
+                    <div className="calendar-week-head">
+                      <h3>{day.label}</h3>
+                      <span>{day.items.length}</span>
+                    </div>
+                    <div className="calendar-entry-list">
+                      {day.items.length > 0 ? day.items.map((vehicle) => (
+                        <button type="button" key={`week-${vehicle.id}`} className={`calendar-entry ${getCalendarStatusTone(vehicle)}`} onClick={() => openVehicle(vehicle.id)}>
+                          <strong>{vehicle.stock_number}</strong>
+                          <p>{vehicle.make} {vehicle.model}</p>
+                          <span>{fmtDate(vehicle.due_date)}</span>
+                        </button>
+                      )) : <div className="calendar-empty">No units</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         ) : (
           <section className="panel">
             <div className="section-heading">
@@ -1070,9 +1258,15 @@ export default function App() {
       {canAccessAdmin ? (
         <div className="mobile-tabbar">
           <button type="button" className={`tab-btn ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>Dashboard</button>
+          <button type="button" className={`tab-btn ${activeTab === "calendar" ? "active" : ""}`} onClick={() => setActiveTab("calendar")}>Calendar</button>
           <button type="button" className={`tab-btn ${activeTab === "admin" ? "active" : ""}`} onClick={() => { setActiveTab("admin"); loadAdminData(); }}>Admin</button>
         </div>
-      ) : null}
+      ) : (
+        <div className="mobile-tabbar mobile-tabbar-two">
+          <button type="button" className={`tab-btn ${activeTab === "dashboard" ? "active" : ""}`} onClick={() => setActiveTab("dashboard")}>Dashboard</button>
+          <button type="button" className={`tab-btn ${activeTab === "calendar" ? "active" : ""}`} onClick={() => setActiveTab("calendar")}>Calendar</button>
+        </div>
+      )}
 
       {showSubmissionModal ? (
         <div className="detail-overlay">
@@ -1201,6 +1395,17 @@ export default function App() {
                       {indicator.label}
                     </span>
                   ))}
+                </div>
+              ) : null}
+              {hasManagerAccess ? (
+                <div className="detail-actions-row">
+                  <button
+                    type="button"
+                    className="danger-btn"
+                    onClick={() => archiveVehicle(selectedVehicle.id)}
+                  >
+                    Archive Vehicle
+                  </button>
                 </div>
               ) : null}
             </div>

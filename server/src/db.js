@@ -124,7 +124,7 @@ const vehicleColumns = `
   id, stock_number, year, make, model, color, status, due_date, current_location, assigned_role,
   assigned_user_id, submitted_by_user_id, needs_service, needs_bodywork, recall_checked, recall_open,
   recall_completed, fueled, qc_required, qc_completed, service_status, bodywork_status,
-  service_notes, bodywork_notes, notes, created_at, updated_at
+  service_notes, bodywork_notes, notes, is_archived, archived_at, created_at, updated_at
 `;
 
 export async function listVehicles(connection = null) {
@@ -142,8 +142,8 @@ export async function insertVehicle(connection, vehicle) {
       id, stock_number, year, make, model, color, status, due_date, current_location, assigned_role,
       assigned_user_id, submitted_by_user_id, needs_service, needs_bodywork, recall_checked, recall_open,
       recall_completed, fueled, qc_required, qc_completed, service_status, bodywork_status,
-      service_notes, bodywork_notes, notes, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      service_notes, bodywork_notes, notes, is_archived, archived_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       vehicle.id,
       vehicle.stock_number,
@@ -170,6 +170,8 @@ export async function insertVehicle(connection, vehicle) {
       vehicle.service_notes,
       vehicle.bodywork_notes,
       vehicle.notes,
+      vehicle.is_archived ? 1 : 0,
+      toMySqlDateTime(vehicle.archived_at),
       toMySqlDateTime(vehicle.created_at),
       toMySqlDateTime(vehicle.updated_at)
     ],
@@ -183,7 +185,7 @@ export async function replaceVehicle(connection, vehicle) {
       stock_number = ?, year = ?, make = ?, model = ?, color = ?, status = ?, due_date = ?, current_location = ?,
       assigned_role = ?, assigned_user_id = ?, submitted_by_user_id = ?, needs_service = ?, needs_bodywork = ?,
       recall_checked = ?, recall_open = ?, recall_completed = ?, fueled = ?, qc_required = ?, qc_completed = ?,
-      service_status = ?, bodywork_status = ?, service_notes = ?, bodywork_notes = ?, notes = ?, updated_at = ?
+      service_status = ?, bodywork_status = ?, service_notes = ?, bodywork_notes = ?, notes = ?, is_archived = ?, archived_at = ?, updated_at = ?
     WHERE id = ?`,
     [
       vehicle.stock_number,
@@ -210,6 +212,8 @@ export async function replaceVehicle(connection, vehicle) {
       vehicle.service_notes,
       vehicle.bodywork_notes,
       vehicle.notes,
+      vehicle.is_archived ? 1 : 0,
+      toMySqlDateTime(vehicle.archived_at),
       toMySqlDateTime(vehicle.updated_at),
       vehicle.id
     ],
