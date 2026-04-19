@@ -44,6 +44,34 @@ export const DEFAULT_ACTION_DEFINITIONS = [
   { key: STATUS.READY, label: "Mark Ready", role: "manager", type: "status", enabled: true }
 ];
 
+function canRoleHandleAction(actionKey, role) {
+  if (!role) {
+    return false;
+  }
+
+  if ([STATUS.TO_DETAIL, STATUS.REMOVED_FROM_DETAIL, "toggle_fueled"].includes(actionKey)) {
+    return ["salesperson", "manager", "bmw_genius"].includes(role);
+  }
+
+  if ([STATUS.DETAIL_STARTED, STATUS.DETAIL_FINISHED].includes(actionKey)) {
+    return role === "detailer";
+  }
+
+  if (["start_service", "complete_service", "start_bodywork", "complete_bodywork", "toggle_recall", "complete_recall"].includes(actionKey)) {
+    return ["service_advisor", "manager"].includes(role);
+  }
+
+  if (actionKey === "complete_qc") {
+    return role === "manager";
+  }
+
+  if (actionKey === STATUS.READY) {
+    return ["salesperson", "manager"].includes(role);
+  }
+
+  return false;
+}
+
 export function formatStatus(status) {
   return STATUS_META[status]?.label ?? status;
 }
@@ -190,6 +218,10 @@ function isActionAvailable(vehicle, action, currentUserId = null, currentUserRol
     return false;
   }
 
+  if (currentUserRole && !canRoleHandleAction(action.key, currentUserRole)) {
+    return false;
+  }
+
   if (action.key === STATUS.TO_DETAIL) {
     return vehicle.status === STATUS.SUBMITTED;
   }
@@ -239,7 +271,7 @@ function isActionAvailable(vehicle, action, currentUserId = null, currentUserRol
   }
 
   if (action.key === STATUS.READY) {
-    return canTransition(vehicle, STATUS.READY).allowed && ["salesperson", "manager"].includes(currentUserRole ?? "");
+    return canTransition(vehicle, STATUS.READY).allowed;
   }
 
   return false;
@@ -254,9 +286,13 @@ export function buildActionList(vehicle, actionDefinitions = DEFAULT_ACTION_DEFI
 
     actions.push({
       ...action,
-      role: action.key === STATUS.READY ? currentUserRole ?? action.role : action.role
+      role: currentUserRole ?? action.role
     });
   });
 
   return actions;
+}
+
+export function roleCanHandleAction(actionKey, role) {
+  return canRoleHandleAction(actionKey, role);
 }
