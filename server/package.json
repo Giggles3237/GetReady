@@ -9,7 +9,8 @@
     "seed:demo": "node scripts/seed-demo.js",
     "migrate:auth": "node scripts/migrate-auth.js",
     "migrate:admin-role": "node scripts/migrate-admin-role.js",
-    "migrate:vehicle-archive": "node scripts/migrate-vehicle-archive.js"
+    "migrate:vehicle-archive": "node scripts/migrate-vehicle-archive.js",
+    "reset:all-passwords": "node scripts/reset-all-passwords.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

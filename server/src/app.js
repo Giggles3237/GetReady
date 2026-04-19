@@ -650,9 +650,10 @@ app.get("/api/admin/audit", requireAdmin, async (req, res) => {
 });
 
 app.get("/api/vehicles", async (req, res) => {
-  const { search, view = "mine" } = req.query;
+  const { search, view = "mine", include_archived = "false" } = req.query;
   const requestedRole = typeof req.query.role === "string" && req.query.role !== "all" ? req.query.role : req.currentUser.role;
   const role = requestedRole === "admin" ? "manager" : requestedRole;
+  const includeArchived = include_archived === "true" && isAdmin(req.currentUser);
   const includeAllSalespersonVehicles = role === "salesperson" && view === "all";
   const normalizedSearch = String(search ?? "").trim().toLowerCase();
   const [users, actionDefinitionsRaw, vehiclesRaw] = await Promise.all([
@@ -682,7 +683,7 @@ app.get("/api/vehicles", async (req, res) => {
     decorateVehicle(vehicle, usersById, timelineByVehicleId.get(vehicle.id) ?? [], actionDefinitions, req.currentUser.id)
   );
 
-  let filtered = decorated.filter((vehicle) => !vehicle.is_archived).filter((vehicle) =>
+  let filtered = decorated.filter((vehicle) => includeArchived || !vehicle.is_archived).filter((vehicle) =>
     getQueueForRole(vehicle, role, actionDefinitions, req.currentUser.id) ||
     (role === "manager" && vehicle.assigned_role === role) ||
     (role === "salesperson" && (includeAllSalespersonVehicles || vehicle.submitted_by_user_id === req.currentUser.id)) ||
@@ -746,6 +747,31 @@ app.patch("/api/vehicles/:id/archive", requireManager, async (req, res) => {
     },
     req.currentUser.id,
     "vehicle_archived"
+  );
+
+  res.json({ vehicle: nextVehicle });
+});
+
+app.patch("/api/vehicles/:id/unarchive", requireAdmin, async (req, res) => {
+  const vehicleRow = await getVehicle(req.params.id);
+
+  if (!vehicleRow) {
+    return res.status(404).json({ message: "Vehicle not found." });
+  }
+
+  const vehicle = normalizeVehicle(vehicleRow);
+  if (!vehicle.is_archived) {
+    return res.status(400).json({ message: "This vehicle is not archived." });
+  }
+
+  const nextVehicle = await updateVehicleWithAudit(
+    vehicle.id,
+    {
+      is_archived: false,
+      archived_at: null
+    },
+    req.currentUser.id,
+    "vehicle_unarchived"
   );
 
   res.json({ vehicle: nextVehicle });

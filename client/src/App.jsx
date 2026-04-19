@@ -287,6 +287,30 @@ function getCompletionEntry(vehicle) {
     .find((entry) => entry.field_changed === "status" && String(entry.new_value).toLowerCase() === "ready") ?? null;
 }
 
+function getCompletedStepEntries(vehicle) {
+  if (!vehicle.timeline) {
+    return [];
+  }
+
+  const definitions = [
+    { key: "detail_finished", label: "Detail Completed", match: (entry) => entry.field_changed === "status" && entry.new_value === "detail_finished" },
+    { key: "removed_from_detail", label: "Removed From Detail", match: (entry) => entry.field_changed === "status" && entry.new_value === "removed_from_detail" },
+    { key: "fueled", label: "Fueled", match: (entry) => entry.field_changed === "fueled" && String(entry.new_value).toLowerCase() === "true" },
+    { key: "recall_checked", label: "Recalls Checked", match: (entry) => entry.field_changed === "recall_checked" && String(entry.new_value).toLowerCase() === "true" },
+    { key: "service_completed", label: "Service Completed", match: (entry) => entry.field_changed === "service_status" && entry.new_value === "completed" },
+    { key: "bodywork_completed", label: "Body Work Completed", match: (entry) => entry.field_changed === "bodywork_status" && entry.new_value === "completed" },
+    { key: "qc_completed", label: "QC Completed", match: (entry) => entry.field_changed === "qc_completed" && String(entry.new_value).toLowerCase() === "true" },
+    { key: "ready", label: "Front Line Ready", match: (entry) => entry.field_changed === "status" && entry.new_value === "ready" }
+  ];
+
+  return definitions
+    .map((definition) => {
+      const entry = [...vehicle.timeline].reverse().find(definition.match);
+      return entry ? { key: definition.key, label: definition.label, entry } : null;
+    })
+    .filter(Boolean);
+}
+
 function groupVehiclesByAction(vehicles, role) {
   const grouped = new Map();
 
@@ -409,10 +433,14 @@ export default function App() {
   const [salespersonView, setSalespersonView] = useState("mine");
   const [calendarView, setCalendarView] = useState("agenda");
   const [showCompleted, setShowCompleted] = useState(false);
+  const [archiveNotice, setArchiveNotice] = useState(null);
+  const [showInactiveUsers, setShowInactiveUsers] = useState(false);
+  const [expandedUserId, setExpandedUserId] = useState(null);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [adminActions, setAdminActions] = useState([]);
   const [auditFeed, setAuditFeed] = useState([]);
+  const [archivedVehicles, setArchivedVehicles] = useState([]);
   const [temporaryPassword, setTemporaryPassword] = useState("");
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
   const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
@@ -441,6 +469,10 @@ export default function App() {
   const hasManagerAccess = ["admin", "manager"].includes(role);
   const salespersonUsers = useMemo(() => users.filter((user) => user.role === "salesperson"), [users]);
   const assignableUsers = useMemo(() => users.filter((user) => user.is_active), [users]);
+  const visibleManagedUsers = useMemo(
+    () => showInactiveUsers ? users : users.filter((user) => user.is_active),
+    [users, showInactiveUsers]
+  );
 
   async function syncSession() {
     try {
@@ -612,7 +644,34 @@ export default function App() {
       });
       setSelectedVehicle(null);
       await loadDashboard();
-      setSuccessMessage("Vehicle archived. Audit history was preserved.");
+      if (canAccessAdmin) {
+        await loadAdminData();
+      }
+      setArchiveNotice({
+        title: "Vehicle Archived",
+        message: "The vehicle was removed from active displays and its audit history was preserved."
+      });
+      setSuccessMessage("");
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function unarchiveVehicle(vehicleId) {
+    try {
+      setError("");
+      const data = await request(`/vehicles/${vehicleId}/unarchive`, {
+        method: "PATCH",
+        body: JSON.stringify({})
+      });
+      await loadDashboard();
+      await loadAdminData();
+      setSelectedVehicle(data.vehicle);
+      setArchiveNotice({
+        title: "Vehicle Restored",
+        message: "The vehicle was returned to active displays."
+      });
+      await openVehicle(vehicleId);
     } catch (err) {
       setError(err.message);
     }
@@ -668,15 +727,17 @@ export default function App() {
 
     try {
       setError("");
-      const [userData, actionData, auditData] = await Promise.all([
+      const [userData, actionData, auditData, archivedData] = await Promise.all([
         request("/users"),
         request("/admin/actions"),
-        request("/admin/audit?limit=150")
+        request("/admin/audit?limit=150"),
+        request("/vehicles?role=admin&include_archived=true")
       ]);
 
       setUsers(userData.users);
       setAdminActions(actionData.actions);
       setAuditFeed(auditData.audit);
+      setArchivedVehicles(archivedData.vehicles.filter((vehicle) => vehicle.is_archived));
     } catch (err) {
       setError(err.message);
     }
@@ -819,6 +880,7 @@ export default function App() {
   );
   const showSalespersonSubmissionSection = dashboardRole === "salesperson" && salespersonView === "mine" && mySubmittedVehicles.length > 0;
   const completionEntry = useMemo(() => selectedVehicle ? getCompletionEntry(selectedVehicle) : null, [selectedVehicle]);
+  const completedSteps = useMemo(() => selectedVehicle ? getCompletedStepEntries(selectedVehicle) : [], [selectedVehicle]);
 
   if (!authReady) {
     return <div className="auth-shell"><section className="auth-card"><h1>Loading...</h1></section></div>;
@@ -1133,9 +1195,10 @@ export default function App() {
             {temporaryPassword ? <div className="temp-password-banner">{temporaryPassword}</div> : null}
 
             <div className="admin-nav">
-              <button type="button" className={`tab-btn ${adminSection === "steps" ? "active" : ""}`} onClick={() => setAdminSection("steps")}>Step Labels</button>
               <button type="button" className={`tab-btn ${adminSection === "users" ? "active" : ""}`} onClick={() => setAdminSection("users")}>Users</button>
+              <button type="button" className={`tab-btn ${adminSection === "archived" ? "active" : ""}`} onClick={() => setAdminSection("archived")}>Archived Units</button>
               <button type="button" className={`tab-btn ${adminSection === "audit" ? "active" : ""}`} onClick={() => setAdminSection("audit")}>Audit</button>
+              <button type="button" className={`tab-btn ${adminSection === "steps" ? "active" : ""}`} onClick={() => setAdminSection("steps")}>Step Labels</button>
             </div>
 
             {adminSection === "steps" ? (
@@ -1171,6 +1234,23 @@ export default function App() {
 
             {adminSection === "users" ? (
               <div className="admin-list">
+                <div className="admin-filter-row">
+                  <button
+                    type="button"
+                    className={`tab-btn ${!showInactiveUsers ? "active" : ""}`}
+                    onClick={() => setShowInactiveUsers(false)}
+                  >
+                    Active Users
+                  </button>
+                  <button
+                    type="button"
+                    className={`tab-btn ${showInactiveUsers ? "active" : ""}`}
+                    onClick={() => setShowInactiveUsers(true)}
+                  >
+                    Show Inactive
+                  </button>
+                </div>
+
                 <form className="admin-card" onSubmit={createAdminUser}>
                   <div className="admin-card-head">
                     <strong>Add User</strong>
@@ -1192,50 +1272,81 @@ export default function App() {
                   <button className="primary-btn" type="submit">Create User</button>
                 </form>
 
-                {users.map((managedUser) => (
-                  <div key={managedUser.id} className="admin-card">
+                <div className="user-list">
+                  <div className="user-list-head">
+                    <span>Name</span>
+                    <span>Title</span>
+                    <span>Status</span>
+                  </div>
+                  {visibleManagedUsers.map((managedUser) => (
+                    <div key={managedUser.id} className={`user-record ${managedUser.is_active ? "" : "inactive-user"}`}>
+                      <button
+                        type="button"
+                        className="user-row"
+                        onClick={() => setExpandedUserId((current) => current === managedUser.id ? null : managedUser.id)}
+                      >
+                        <strong>{managedUser.name}</strong>
+                        <span>{roleOptions.find((option) => option.value === managedUser.role)?.label}</span>
+                        <label className="toggle-line user-toggle" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={managedUser.is_active}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setUsers((current) => current.map((item) => item.id === managedUser.id ? { ...item, is_active: checked } : item));
+                              updateAdminUser(managedUser.id, { is_active: checked });
+                            }}
+                          />
+                          {managedUser.is_active ? "Active" : "Inactive"}
+                        </label>
+                      </button>
+
+                      {expandedUserId === managedUser.id ? (
+                        <div className="user-detail-row">
+                          <div className="user-detail-copy">
+                            <p><strong>Email:</strong> {managedUser.email}</p>
+                            <p><strong>Created:</strong> {fmtDate(managedUser.created_at)}</p>
+                            <p><strong>Last Updated:</strong> {fmtDate(managedUser.updated_at)}</p>
+                          </div>
+                          <div className="admin-inline-actions">
+                            <button type="button" className="secondary-btn" onClick={() => resetAdminPassword(managedUser.id, managedUser.email)}>
+                              Reset Password
+                            </button>
+                            <select
+                              value={managedUser.role}
+                              onChange={(event) => {
+                                const roleValue = event.target.value;
+                                setUsers((current) => current.map((item) => item.id === managedUser.id ? { ...item, role: roleValue } : item));
+                                updateAdminUser(managedUser.id, { role: roleValue });
+                              }}
+                            >
+                              {roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {adminSection === "archived" ? (
+              <div className="admin-list">
+                {archivedVehicles.length > 0 ? archivedVehicles.map((vehicle) => (
+                  <div key={vehicle.id} className="admin-card inactive-user">
                     <div className="admin-card-head">
                       <div>
-                        <strong>{managedUser.name}</strong>
-                        <p className="admin-meta">{roleOptions.find((option) => option.value === managedUser.role)?.label} | {managedUser.email}</p>
+                        <strong>{vehicle.stock_number} | {vehicle.year} {vehicle.make} {vehicle.model}</strong>
+                        <p className="admin-meta">{vehicle.current_location} | Archived</p>
                       </div>
-                      <button type="button" className="secondary-btn" onClick={() => resetAdminPassword(managedUser.id, managedUser.email)}>Reset Password</button>
+                      <div className="admin-inline-actions">
+                        <button type="button" className="secondary-btn" onClick={() => openVehicle(vehicle.id)}>View</button>
+                        <button type="button" className="primary-btn" onClick={() => unarchiveVehicle(vehicle.id)}>Unarchive</button>
+                      </div>
                     </div>
-                    <label>
-                      Name
-                      <input defaultValue={managedUser.name} onBlur={(event) => updateAdminUser(managedUser.id, { name: event.target.value })} />
-                    </label>
-                    <label>
-                      Email
-                      <input defaultValue={managedUser.email} onBlur={(event) => updateAdminUser(managedUser.id, { email: event.target.value })} />
-                    </label>
-                    <label>
-                      Role
-                      <select
-                        value={managedUser.role}
-                        onChange={(event) => {
-                          const roleValue = event.target.value;
-                          setUsers((current) => current.map((item) => item.id === managedUser.id ? { ...item, role: roleValue } : item));
-                          updateAdminUser(managedUser.id, { role: roleValue });
-                        }}
-                      >
-                        {roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                      </select>
-                    </label>
-                    <label className="toggle-line">
-                      <input
-                        type="checkbox"
-                        checked={managedUser.is_active}
-                        onChange={(event) => {
-                          const checked = event.target.checked;
-                          setUsers((current) => current.map((item) => item.id === managedUser.id ? { ...item, is_active: checked } : item));
-                          updateAdminUser(managedUser.id, { is_active: checked });
-                        }}
-                      />
-                      Active
-                    </label>
                   </div>
-                ))}
+                )) : <div className="empty-inline">No archived vehicles found.</div>}
               </div>
             ) : null}
 
@@ -1370,6 +1481,12 @@ export default function App() {
             </div>
 
             <div className="detail-card">
+              {selectedVehicle.is_archived ? (
+                <div className="completion-banner">
+                  <strong>Archived Vehicle</strong>
+                  <span>This unit is hidden from active displays but still preserved in the audit history.</span>
+                </div>
+              ) : null}
               {selectedVehicle.status === "ready" ? (
                 <div className="completion-banner">
                   <strong>Front Line Ready</strong>
@@ -1381,13 +1498,10 @@ export default function App() {
                 </div>
               ) : null}
               <p><strong>Status:</strong> {formatFieldLabel(selectedVehicle.status)}</p>
-              <p><strong>Location:</strong> {selectedVehicle.current_location}</p>
               <p><strong>Due:</strong> {fmtDate(selectedVehicle.due_date)}</p>
-              <p><strong>Assigned Role:</strong> {selectedVehicle.assigned_role?.replaceAll("_", " ") ?? "Complete"}</p>
               <p><strong>Notes:</strong> {selectedVehicle.notes || "None"}</p>
               {selectedVehicle.needs_service ? <p><strong>{getServiceDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.service_notes || "No service notes"}</p> : null}
               {selectedVehicle.needs_bodywork ? <p><strong>{getBodyworkDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.bodywork_notes || "No body work notes"}</p> : null}
-              {selectedVehicle.blockers.length > 0 ? <p><strong>Blocking Issues:</strong> {selectedVehicle.blockers.join(" ")}</p> : null}
               {getCompletionIndicators(selectedVehicle).length > 0 ? (
                 <div className="indicator-grid">
                   {getCompletionIndicators(selectedVehicle).map((indicator) => (
@@ -1399,13 +1513,23 @@ export default function App() {
               ) : null}
               {hasManagerAccess ? (
                 <div className="detail-actions-row">
-                  <button
-                    type="button"
-                    className="danger-btn"
-                    onClick={() => archiveVehicle(selectedVehicle.id)}
-                  >
-                    Archive Vehicle
-                  </button>
+                  {selectedVehicle.is_archived && canAccessAdmin ? (
+                    <button
+                      type="button"
+                      className="primary-btn"
+                      onClick={() => unarchiveVehicle(selectedVehicle.id)}
+                    >
+                      Unarchive Vehicle
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="danger-btn"
+                      onClick={() => archiveVehicle(selectedVehicle.id)}
+                    >
+                      Archive Vehicle
+                    </button>
+                  )}
                 </div>
               ) : null}
             </div>
@@ -1434,6 +1558,20 @@ export default function App() {
             </div>
 
             <div className="detail-card">
+              <h3>Completed Steps</h3>
+              {completedSteps.length > 0 ? (
+                <div className="timeline">
+                  {completedSteps.map((step) => (
+                    <div key={step.key} className="timeline-item">
+                      <strong>{step.label}</strong>
+                      <span>{step.entry.user?.name ?? "Unknown User"} | {fmtDate(step.entry.created_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="step-helper">No completed steps have been logged yet.</p>}
+            </div>
+
+            <div className="detail-card">
               <h3>Audit Timeline</h3>
               <div className="timeline">
                 {selectedVehicle.timeline.map((entry) => (
@@ -1444,6 +1582,23 @@ export default function App() {
                   </div>
                 ))}
               </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {archiveNotice ? (
+        <div className="detail-overlay">
+          <section className="detail-modal notice-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Success</p>
+                <h2>{archiveNotice.title}</h2>
+              </div>
+              <button type="button" className="secondary-btn" onClick={() => setArchiveNotice(null)}>Close</button>
+            </div>
+            <div className="detail-card">
+              <p>{archiveNotice.message}</p>
             </div>
           </section>
         </div>
