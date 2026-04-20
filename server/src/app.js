@@ -351,17 +351,26 @@ function resolveSubmittedByUser(users, payload, fallbackUser = null) {
   const usersById = new Map(users.map((user) => [user.id, user]));
   const byId = payload.submitted_by_user_id ?? payload.salesperson_id;
   if (byId) {
-    return usersById.get(byId) ?? null;
+    const matchedById = usersById.get(byId);
+    if (matchedById) {
+      return matchedById;
+    }
   }
 
   const byEmail = String(payload.submitted_by_email ?? payload.salesperson_email ?? "").trim().toLowerCase();
   if (byEmail) {
-    return users.find((user) => String(user.email).trim().toLowerCase() === byEmail) ?? null;
+    const matchedByEmail = users.find((user) => String(user.email).trim().toLowerCase() === byEmail);
+    if (matchedByEmail) {
+      return matchedByEmail;
+    }
   }
 
   const byName = String(payload.submitted_by_name ?? payload.salesperson_name ?? payload.advisor ?? "").trim().toLowerCase();
   if (byName) {
-    return users.find((user) => String(user.name).trim().toLowerCase() === byName) ?? null;
+    const matchedByName = users.find((user) => String(user.name).trim().toLowerCase() === byName);
+    if (matchedByName) {
+      return matchedByName;
+    }
   }
 
   return fallbackUser;
