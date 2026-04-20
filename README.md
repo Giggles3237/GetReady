@@ -91,6 +91,8 @@ Required Render environment variables:
 - `DB_USER`
 - `DB_PASSWORD`
 - `DB_SSL=true`
+- `SESSION_SECRET`
+- `BOPCHIPBOARD_API_KEY`
 - `PORT=4000`
 
 ### Vercel frontend
@@ -107,6 +109,50 @@ Vercel project settings:
 Required Vercel environment variable:
 
 - `VITE_API_URL=https://your-render-service.onrender.com/api`
+
+## Bopchipboard integration
+
+The backend now supports a dedicated integration endpoint for Netlify/server-to-server submission:
+
+- `POST /api/integrations/bopchipboard/get-ready`
+
+Authentication:
+
+- header: `x-integration-key: <BOPCHIPBOARD_API_KEY>`
+
+Recommended required payload:
+
+```json
+{
+  "stock_number": "B12345",
+  "year": 2024,
+  "make": "BMW",
+  "model": "X5",
+  "color": "Black Sapphire Metallic",
+  "due_date": "2026-04-20T14:00:00-04:00",
+  "submitted_by_email": "chris@dealership.local",
+  "notes": "Rush unit from chipboard"
+}
+```
+
+Supported salesperson lookup fields:
+
+- `submitted_by_user_id`
+- `submitted_by_email`
+- `submitted_by_name`
+- aliases: `salesperson_id`, `salesperson_email`, `salesperson_name`, `advisor`
+
+Optional convenience fields for chipboard payloads:
+
+- `instructions`
+- `comments`
+- `location`
+- `miles`
+- `customer_name` / `customerName`
+- `getReadyDate`
+- `promiseTime`
+
+If `needs_service` or `needs_bodywork` are omitted, the integration route can infer them from `instructions`.
 
 ### Local production checks
 

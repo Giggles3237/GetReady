@@ -38,6 +38,13 @@ import {
 const app = express();
 const port = process.env.PORT || 4000;
 const isProduction = process.env.NODE_ENV === "production";
+const integrationKeys = [
+  process.env.BOPCHIPBOARD_API_KEY,
+  ...String(process.env.INTEGRATION_API_KEYS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+].filter(Boolean);
 
 function isAdmin(user) {
   return user?.role === "admin";
@@ -61,6 +68,35 @@ function buildAllowedOrigins() {
 }
 
 const allowedOrigins = buildAllowedOrigins();
+
+function readIntegrationKey(req) {
+  const headerKey = req.get("x-integration-key");
+  if (headerKey) {
+    return headerKey.trim();
+  }
+
+  const authHeader = req.get("authorization");
+  if (authHeader?.toLowerCase().startsWith("bearer ")) {
+    return authHeader.slice(7).trim();
+  }
+
+  return "";
+}
+
+function requireBopchipboardKey(req, res, next) {
+  if (integrationKeys.length === 0) {
+    res.status(500).json({ message: "Bopchipboard integration key is not configured." });
+    return;
+  }
+
+  const providedKey = readIntegrationKey(req);
+  if (!providedKey || !integrationKeys.includes(providedKey)) {
+    res.status(401).json({ message: "A valid integration key is required." });
+    return;
+  }
+
+  next();
+}
 
 app.set("trust proxy", 1);
 
@@ -208,6 +244,242 @@ function generateTemporaryPassword() {
   return `Temp${Math.random().toString(36).slice(2, 8)}!9`;
 }
 
+function buildDueDateFromParts(dateValue, timeValue = "14:00") {
+  if (!dateValue) {
+    return null;
+  }
+
+  const normalizedTime = /^\d{2}:\d{2}$/.test(String(timeValue)) ? String(timeValue) : "14:00";
+  const parsed = new Date(`${dateValue}T${normalizedTime}:00`);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString();
+}
+
+function toBoolean(value, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) {
+      return true;
+    }
+
+    if (["false", "0", "no", "off", ""].includes(normalized)) {
+      return false;
+    }
+  }
+
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+
+  return fallback;
+}
+
+function normalizeInstructionList(instructions) {
+  if (Array.isArray(instructions)) {
+    return instructions.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof instructions === "string") {
+    return instructions.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+
+  return [];
+}
+
+function deriveFlagsFromInstructions(instructions) {
+  const serviceTriggers = [
+    "Maintenance",
+    "Safety Check",
+    "PDI",
+    "State and Emissions",
+    "Check for Retail",
+    "Wholesale - Check for recalls"
+  ];
+
+  return {
+    needsService: instructions.some((item) => serviceTriggers.includes(item)),
+    needsBodywork: instructions.includes("Body Estimate"),
+    serviceNotes: instructions.filter((item) => serviceTriggers.includes(item)).join(", "),
+    bodyworkNotes: instructions.includes("Body Estimate") ? "Body Estimate requested" : ""
+  };
+}
+
+function buildIntegrationNotes(payload, instructions, integrationSource) {
+  const mergedNotes = [];
+
+  if (typeof payload.notes === "string" && payload.notes.trim()) {
+    mergedNotes.push(payload.notes.trim());
+  }
+
+  if (typeof payload.comments === "string" && payload.comments.trim()) {
+    mergedNotes.push(`Comments: ${payload.comments.trim()}`);
+  }
+
+  if (payload.location) {
+    mergedNotes.push(`Location: ${payload.location}`);
+  }
+
+  if (payload.miles) {
+    mergedNotes.push(`Miles: ${payload.miles}`);
+  }
+
+  if (payload.customer_name || payload.customerName) {
+    mergedNotes.push(`Customer: ${payload.customer_name ?? payload.customerName}`);
+  }
+
+  if (payload.chassis) {
+    mergedNotes.push(`Chassis: ${payload.chassis}`);
+  }
+
+  if (instructions.length > 0) {
+    mergedNotes.push(`Instructions: ${instructions.join(", ")}`);
+  }
+
+  mergedNotes.push(`Source: ${integrationSource}`);
+  return mergedNotes.join("\n");
+}
+
+function resolveSubmittedByUser(users, payload, fallbackUser = null) {
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const byId = payload.submitted_by_user_id ?? payload.salesperson_id;
+  if (byId) {
+    return usersById.get(byId) ?? null;
+  }
+
+  const byEmail = String(payload.submitted_by_email ?? payload.salesperson_email ?? "").trim().toLowerCase();
+  if (byEmail) {
+    return users.find((user) => String(user.email).trim().toLowerCase() === byEmail) ?? null;
+  }
+
+  const byName = String(payload.submitted_by_name ?? payload.salesperson_name ?? payload.advisor ?? "").trim().toLowerCase();
+  if (byName) {
+    return users.find((user) => String(user.name).trim().toLowerCase() === byName) ?? null;
+  }
+
+  return fallbackUser;
+}
+
+async function createVehicleRecord({
+  actorUser,
+  payload,
+  allowAlternateSubmitter = false,
+  actionType = "vehicle_created",
+  statusLabel = "Get Ready Submitted",
+  integrationSource = actorUser ? "get-ready-app" : "bopchipboard",
+  enrichNotes = false
+}) {
+  const {
+    assigned_user_id = null,
+    service_notes = "",
+    bodywork_notes = "",
+    qc_required = false
+  } = payload;
+
+  const stockNumber = payload.stock_number ?? payload.stockNumber;
+  const dueDate = payload.due_date ?? buildDueDateFromParts(payload.getReadyDate, payload.promiseTime);
+  const instructions = normalizeInstructionList(payload.instructions);
+  const derivedFlags = deriveFlagsFromInstructions(instructions);
+  const needsService = payload.needs_service == null ? derivedFlags.needsService : toBoolean(payload.needs_service);
+  const needsBodywork = payload.needs_bodywork == null ? derivedFlags.needsBodywork : toBoolean(payload.needs_bodywork);
+  const resolvedSource = payload.integration_source ?? payload.integrationSource ?? integrationSource;
+
+  if (!stockNumber || !payload.year || !payload.make || !payload.model || !dueDate) {
+    throw Object.assign(new Error("Missing required vehicle fields."), { statusCode: 400 });
+  }
+
+  const existing = (await listVehicles()).find((vehicle) => vehicle.stock_number.toLowerCase() === String(stockNumber).toLowerCase());
+  if (existing) {
+    throw Object.assign(new Error("That stock number already exists."), { statusCode: 409 });
+  }
+
+  const users = await listUsers();
+  const usersById = new Map(users.map((user) => [user.id, user]));
+  const submittedByUser = resolveSubmittedByUser(users, payload, actorUser);
+
+  if (!submittedByUser) {
+    throw Object.assign(new Error("The selected salesperson could not be found."), { statusCode: 400 });
+  }
+
+  if (!allowAlternateSubmitter && actorUser && submittedByUser.id !== actorUser.id) {
+    throw Object.assign(new Error("Only a Manager can submit a get ready for another user."), { statusCode: 403 });
+  }
+
+  const initialAssignedUserId = allowAlternateSubmitter && assigned_user_id ? assigned_user_id : null;
+  if (initialAssignedUserId && !usersById.has(initialAssignedUserId)) {
+    throw Object.assign(new Error("The selected assigned user could not be found."), { statusCode: 400 });
+  }
+
+  const vehicle = {
+    id: uuid(),
+    stock_number: stockNumber,
+    year: Number(payload.year),
+    make: payload.make,
+    model: payload.model,
+    color: payload.color ?? "",
+    status: STATUS.SUBMITTED,
+    due_date: dueDate,
+    current_location: "Submitted",
+    assigned_user_id: initialAssignedUserId,
+    submitted_by_user_id: submittedByUser.id,
+    needs_service: needsService,
+    needs_bodywork: needsBodywork,
+    recall_checked: false,
+    recall_open: false,
+    recall_completed: false,
+    fueled: false,
+    qc_required: toBoolean(qc_required),
+    qc_completed: false,
+    service_status: needsService ? "pending" : "not_needed",
+    bodywork_status: needsBodywork ? "pending" : "not_needed",
+    service_notes: needsService ? String(service_notes || derivedFlags.serviceNotes || "") : "",
+    bodywork_notes: needsBodywork ? String(bodywork_notes || derivedFlags.bodyworkNotes || "") : "",
+    notes: enrichNotes ? buildIntegrationNotes(payload, instructions, resolvedSource) : String(payload.notes ?? ""),
+    assigned_role: "bmw_genius",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+
+  const pool = getPool();
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+    await insertVehicle(connection, vehicle);
+    await addAuditEntry(connection, {
+      vehicleId: vehicle.id,
+      userId: actorUser?.id ?? submittedByUser.id,
+      actionType,
+      fieldChanged: "status",
+      oldValue: "",
+      newValue: statusLabel
+    });
+    await addAuditEntry(connection, {
+      vehicleId: vehicle.id,
+      userId: actorUser?.id ?? submittedByUser.id,
+      actionType,
+      fieldChanged: "integration_source",
+      oldValue: "",
+      newValue: resolvedSource
+    });
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+
+  return vehicle;
+}
+
 async function addAuditEntry(connection, { vehicleId = null, userId, actionType, fieldChanged, oldValue, newValue }) {
   await insertAuditLog(connection, {
     id: uuid(),
@@ -353,6 +625,20 @@ app.post("/api/auth/logout", (req, res) => {
 
 app.get("/api/auth/me", (req, res) => {
   res.json({ user: req.currentUser });
+});
+
+app.post("/api/integrations/bopchipboard/get-ready", requireBopchipboardKey, async (req, res) => {
+  const vehicle = await createVehicleRecord({
+    actorUser: null,
+    payload: req.body,
+    allowAlternateSubmitter: true,
+    actionType: "vehicle_created_integration",
+    statusLabel: "Get Ready Submitted via bopchipboard",
+    integrationSource: "bopchipboard",
+    enrichNotes: true
+  });
+
+  res.status(201).json({ vehicle });
 });
 
 app.patch("/api/auth/change-password", requireAuth, async (req, res) => {
@@ -778,103 +1064,11 @@ app.patch("/api/vehicles/:id/unarchive", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/vehicles", async (req, res) => {
-  const {
-    stock_number,
-    year,
-    make,
-    model,
-    color,
-    due_date,
-    submitted_by_user_id,
-    assigned_user_id = null,
-    needs_service = false,
-    needs_bodywork = false,
-    service_notes = "",
-    bodywork_notes = "",
-    qc_required = false,
-    notes = ""
-  } = req.body;
-
-  if (!stock_number || !year || !make || !model || !due_date) {
-    return res.status(400).json({ message: "Missing required vehicle fields." });
-  }
-
-  const existing = (await listVehicles()).find((vehicle) => vehicle.stock_number.toLowerCase() === String(stock_number).toLowerCase());
-  if (existing) {
-    return res.status(409).json({ message: "That stock number already exists." });
-  }
-
-  const users = await listUsers();
-  const usersById = new Map(users.map((user) => [user.id, user]));
-  const submittedByUserId = hasManagerAccess(req.currentUser) && submitted_by_user_id
-    ? submitted_by_user_id
-    : req.currentUser.id;
-
-  const submittedByUser = usersById.get(submittedByUserId);
-  if (!submittedByUser) {
-    return res.status(400).json({ message: "The selected salesperson could not be found." });
-  }
-
-  if (!hasManagerAccess(req.currentUser) && submittedByUserId !== req.currentUser.id) {
-    return res.status(403).json({ message: "Only a Manager can submit a get ready for another user." });
-  }
-
-  const initialAssignedUserId = hasManagerAccess(req.currentUser) && assigned_user_id ? assigned_user_id : null;
-  if (initialAssignedUserId && !usersById.has(initialAssignedUserId)) {
-    return res.status(400).json({ message: "The selected assigned user could not be found." });
-  }
-
-  const vehicle = {
-    id: uuid(),
-    stock_number,
-    year: Number(year),
-    make,
-    model,
-    color,
-    status: STATUS.SUBMITTED,
-    due_date,
-    current_location: "Submitted",
-    assigned_user_id: initialAssignedUserId,
-    submitted_by_user_id: submittedByUserId,
-    needs_service: Boolean(needs_service),
-    needs_bodywork: Boolean(needs_bodywork),
-    recall_checked: false,
-    recall_open: false,
-    recall_completed: false,
-    fueled: false,
-    qc_required: Boolean(qc_required),
-    qc_completed: false,
-    service_status: needs_service ? "pending" : "not_needed",
-    bodywork_status: needs_bodywork ? "pending" : "not_needed",
-    service_notes: needs_service ? service_notes : "",
-    bodywork_notes: needs_bodywork ? bodywork_notes : "",
-    notes,
-    assigned_role: "bmw_genius",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  };
-
-  const pool = getPool();
-  const connection = await pool.getConnection();
-
-  try {
-    await connection.beginTransaction();
-    await insertVehicle(connection, vehicle);
-    await addAuditEntry(connection, {
-      vehicleId: vehicle.id,
-      userId: req.currentUser.id,
-      actionType: "vehicle_created",
-      fieldChanged: "status",
-      oldValue: "",
-      newValue: "Get Ready Submitted"
-    });
-    await connection.commit();
-  } catch (error) {
-    await connection.rollback();
-    throw error;
-  } finally {
-    connection.release();
-  }
+  const vehicle = await createVehicleRecord({
+    actorUser: req.currentUser,
+    payload: req.body,
+    allowAlternateSubmitter: hasManagerAccess(req.currentUser)
+  });
 
   res.status(201).json({ vehicle });
 });
