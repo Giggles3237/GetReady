@@ -353,7 +353,7 @@ function resolveSubmittedByUser(users, payload, fallbackUser = null) {
   if (byId) {
     const matchedById = usersById.get(byId);
     if (matchedById) {
-      return matchedById;
+      return { user: matchedById, matched: true, matchType: "id" };
     }
   }
 
@@ -361,7 +361,7 @@ function resolveSubmittedByUser(users, payload, fallbackUser = null) {
   if (byEmail) {
     const matchedByEmail = users.find((user) => String(user.email).trim().toLowerCase() === byEmail);
     if (matchedByEmail) {
-      return matchedByEmail;
+      return { user: matchedByEmail, matched: true, matchType: "email" };
     }
   }
 
@@ -369,11 +369,20 @@ function resolveSubmittedByUser(users, payload, fallbackUser = null) {
   if (byName) {
     const matchedByName = users.find((user) => String(user.name).trim().toLowerCase() === byName);
     if (matchedByName) {
-      return matchedByName;
+      return { user: matchedByName, matched: true, matchType: "name" };
     }
   }
 
-  return fallbackUser;
+  if (fallbackUser) {
+    return { user: fallbackUser, matched: false, matchType: "fallback" };
+  }
+
+  const stanleyUser = users.find((user) => String(user.name).trim().toLowerCase() === "stanley");
+  if (stanleyUser) {
+    return { user: stanleyUser, matched: false, matchType: "stanley" };
+  }
+
+  return { user: null, matched: false, matchType: "none" };
 }
 
 async function createVehicleRecord({
@@ -411,13 +420,14 @@ async function createVehicleRecord({
 
   const users = await listUsers();
   const usersById = new Map(users.map((user) => [user.id, user]));
-  const submittedByUser = resolveSubmittedByUser(users, payload, actorUser);
+  const submittedByResolution = resolveSubmittedByUser(users, payload, actorUser);
+  const submittedByUser = submittedByResolution.user;
 
   if (!submittedByUser) {
     throw Object.assign(new Error("The selected salesperson could not be found."), { statusCode: 400 });
   }
 
-  if (!allowAlternateSubmitter && actorUser && submittedByUser.id !== actorUser.id) {
+  if (!allowAlternateSubmitter && actorUser && submittedByResolution.matched && submittedByUser.id !== actorUser.id) {
     throw Object.assign(new Error("Only a Manager can submit a get ready for another user."), { statusCode: 403 });
   }
 
@@ -425,6 +435,23 @@ async function createVehicleRecord({
   if (initialAssignedUserId && !usersById.has(initialAssignedUserId)) {
     throw Object.assign(new Error("The selected assigned user could not be found."), { statusCode: 400 });
   }
+
+  const mismatchNote = !submittedByResolution.matched
+    ? [
+        "Original salesperson could not be matched in Get Ready.",
+        payload.submitted_by_name || payload.salesperson_name || payload.advisor
+          ? `Original salesperson name: ${payload.submitted_by_name ?? payload.salesperson_name ?? payload.advisor}`
+          : "",
+        payload.submitted_by_email || payload.salesperson_email
+          ? `Original salesperson email: ${payload.submitted_by_email ?? payload.salesperson_email}`
+          : "",
+        `Assigned to fallback user: ${submittedByUser.name}`
+      ].filter(Boolean).join("\n")
+    : "";
+
+  const combinedNotes = [buildIntegrationNotes(payload, instructions, resolvedSource), mismatchNote]
+    .filter(Boolean)
+    .join("\n\n");
 
   const vehicle = {
     id: uuid(),
@@ -450,7 +477,7 @@ async function createVehicleRecord({
     bodywork_status: needsBodywork ? "pending" : "not_needed",
     service_notes: needsService ? String(service_notes || derivedFlags.serviceNotes || "") : "",
     bodywork_notes: needsBodywork ? String(bodywork_notes || derivedFlags.bodyworkNotes || "") : "",
-    notes: enrichNotes ? buildIntegrationNotes(payload, instructions, resolvedSource) : String(payload.notes ?? ""),
+    notes: enrichNotes ? combinedNotes : String(payload.notes ?? ""),
     assigned_role: "bmw_genius",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
@@ -486,7 +513,12 @@ async function createVehicleRecord({
     connection.release();
   }
 
-  return vehicle;
+  return {
+    vehicle,
+    warning: submittedByResolution.matched
+      ? null
+      : `Salesperson match not found. Assigned to fallback user ${submittedByUser.name}.`
+  };
 }
 
 async function addAuditEntry(connection, { vehicleId = null, userId, actionType, fieldChanged, oldValue, newValue }) {
@@ -637,7 +669,7 @@ app.get("/api/auth/me", (req, res) => {
 });
 
 app.post("/api/integrations/bopchipboard/get-ready", requireBopchipboardKey, async (req, res) => {
-  const vehicle = await createVehicleRecord({
+  const result = await createVehicleRecord({
     actorUser: null,
     payload: req.body,
     allowAlternateSubmitter: true,
@@ -647,7 +679,7 @@ app.post("/api/integrations/bopchipboard/get-ready", requireBopchipboardKey, asy
     enrichNotes: true
   });
 
-  res.status(201).json({ vehicle });
+  res.status(201).json(result);
 });
 
 app.patch("/api/auth/change-password", requireAuth, async (req, res) => {
@@ -1073,13 +1105,13 @@ app.patch("/api/vehicles/:id/unarchive", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/vehicles", async (req, res) => {
-  const vehicle = await createVehicleRecord({
+  const result = await createVehicleRecord({
     actorUser: req.currentUser,
     payload: req.body,
     allowAlternateSubmitter: hasManagerAccess(req.currentUser)
   });
 
-  res.status(201).json({ vehicle });
+  res.status(201).json({ vehicle: result.vehicle });
 });
 
 app.patch("/api/vehicles/:id/status", async (req, res) => {
