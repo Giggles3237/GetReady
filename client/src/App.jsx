@@ -33,6 +33,20 @@ function fmtDate(value) {
   });
 }
 
+function toDateTimeLocalValue(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 16);
+}
+
 function fmtDayLabel(value) {
   return new Date(value).toLocaleDateString([], {
     weekday: "short",
@@ -130,6 +144,18 @@ function getDueSortValue(vehicle) {
   return new Date(vehicle.due_date).getTime();
 }
 
+function getSearchResultState(vehicle) {
+  if (vehicle.is_archived) {
+    return "Archived";
+  }
+
+  if (vehicle.status === "ready") {
+    return "Completed";
+  }
+
+  return "Active";
+}
+
 function getNextActionForRole(vehicle, role) {
   return vehicle.actions.find((action) => action.role === role) ?? null;
 }
@@ -137,8 +163,10 @@ function getNextActionForRole(vehicle, role) {
 function getRoleActionPriority(role, actionKey) {
   if (role === "bmw_genius") {
     if (actionKey === "to_detail") return 1;
-    if (actionKey === "removed_from_detail") return 2;
-    if (actionKey === "toggle_fueled") return 3;
+    if (actionKey === "detail_started") return 2;
+    if (actionKey === "detail_finished") return 3;
+    if (actionKey === "removed_from_detail") return 4;
+    if (actionKey === "toggle_fueled") return 5;
   }
 
   return 99;
@@ -426,16 +454,17 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [summary, setSummary] = useState(null);
-  const [calendarItems, setCalendarItems] = useState([]);
   const [selectedVehicle, setSelectedVehicle] = useState(null);
   const [showSubmissionModal, setShowSubmissionModal] = useState(false);
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
   const [salespersonView, setSalespersonView] = useState("mine");
   const [calendarView, setCalendarView] = useState("agenda");
-  const [showCompleted, setShowCompleted] = useState(false);
   const [archiveNotice, setArchiveNotice] = useState(null);
   const [showInactiveUsers, setShowInactiveUsers] = useState(false);
   const [expandedUserId, setExpandedUserId] = useState(null);
+  const [dueDateEdit, setDueDateEdit] = useState("");
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [adminActions, setAdminActions] = useState([]);
@@ -467,6 +496,7 @@ export default function App() {
   const dashboardRole = role === "admin" ? "manager" : role;
   const canAccessAdmin = role === "admin";
   const hasManagerAccess = ["admin", "manager"].includes(role);
+  const canEditDueDate = ["admin", "manager", "salesperson"].includes(role);
   const salespersonUsers = useMemo(() => users.filter((user) => user.role === "salesperson"), [users]);
   const assignableUsers = useMemo(() => users.filter((user) => user.is_active), [users]);
   const visibleManagedUsers = useMemo(
@@ -485,7 +515,7 @@ export default function App() {
     }
   }
 
-  async function loadDashboard(nextSearch = search) {
+  async function loadDashboard() {
     if (!authUser) {
       return;
     }
@@ -493,17 +523,15 @@ export default function App() {
     try {
       setError("");
       const viewQuery = dashboardRole === "salesperson" ? `&view=${salespersonView}` : "";
-      const [userData, vehicleData, summaryData, calendarData] = await Promise.all([
+      const [userData, vehicleData, summaryData] = await Promise.all([
         request("/users"),
-        request(`/vehicles?role=${dashboardRole}&search=${encodeURIComponent(nextSearch)}${viewQuery}`),
-        request(`/dashboard/summary?role=${dashboardRole}${viewQuery}`),
-        request("/dashboard/calendar")
+        request(`/vehicles?role=${dashboardRole}${viewQuery}`),
+        request(`/dashboard/summary?role=${dashboardRole}${viewQuery}`)
       ]);
 
       setUsers(userData.users);
       setVehicles(vehicleData.vehicles);
       setSummary(summaryData.summary);
-      setCalendarItems(calendarData.items);
 
       if (selectedVehicle) {
         try {
@@ -526,8 +554,8 @@ export default function App() {
       return;
     }
 
-    loadDashboard(search);
-  }, [authUser, search, salespersonView]);
+    loadDashboard();
+  }, [authUser, salespersonView]);
 
   useEffect(() => {
     if (!authUser) {
@@ -546,13 +574,38 @@ export default function App() {
     }
 
     const intervalId = window.setInterval(() => {
-      loadDashboard(search);
+      loadDashboard();
     }, AUTO_REFRESH_INTERVAL_MS);
 
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [authUser, search, selectedVehicle?.id, salespersonView]);
+  }, [authUser, selectedVehicle?.id, salespersonView]);
+
+  useEffect(() => {
+    setDueDateEdit(selectedVehicle ? toDateTimeLocalValue(selectedVehicle.due_date) : "");
+  }, [selectedVehicle?.id, selectedVehicle?.due_date]);
+
+  useEffect(() => {
+    const query = search.trim();
+    if (!searchOpen || !query) {
+      setSearchResults([]);
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const data = await request(`/search/vehicles?q=${encodeURIComponent(query)}`);
+        setSearchResults(data.vehicles);
+      } catch (err) {
+        setError(err.message);
+      }
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [search, searchOpen]);
 
   async function handleLogin(event) {
     event.preventDefault();
@@ -576,7 +629,6 @@ export default function App() {
     setUsers([]);
     setVehicles([]);
     setSummary(null);
-    setCalendarItems([]);
     setSelectedVehicle(null);
     setAdminActions([]);
     setAuditFeed([]);
@@ -627,6 +679,20 @@ export default function App() {
       await request(`/vehicles/${vehicleId}/flags`, {
         method: "PATCH",
         body: JSON.stringify(changes)
+      });
+      await loadDashboard();
+      await openVehicle(vehicleId);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function updateVehicleDueDate(vehicleId) {
+    try {
+      setError("");
+      await request(`/vehicles/${vehicleId}/due-date`, {
+        method: "PATCH",
+        body: JSON.stringify({ due_date: new Date(dueDateEdit).toISOString() })
       });
       await loadDashboard();
       await openVehicle(vehicleId);
@@ -801,8 +867,8 @@ export default function App() {
   }
 
   const filteredForDisplay = useMemo(
-    () => showCompleted ? vehicles : vehicles.filter((vehicle) => vehicle.status !== "ready"),
-    [vehicles, showCompleted]
+    () => vehicles.filter((vehicle) => vehicle.status !== "ready"),
+    [vehicles]
   );
 
   const grouped = useMemo(() => {
@@ -875,13 +941,22 @@ export default function App() {
   }, [calendarVehicles]);
   const actionSections = useMemo(() => groupVehiclesByAction(nextUpVehicles, role), [nextUpVehicles, role]);
   const availableActions = useMemo(
-    () => selectedVehicle ? selectedVehicle.actions.filter((action) => action.role === role) : [],
+    () => {
+      if (!selectedVehicle) {
+        return [];
+      }
+
+      if (role === "admin") {
+        return selectedVehicle.actions;
+      }
+
+      return selectedVehicle.actions.filter((action) => action.role === role);
+    },
     [selectedVehicle, role]
   );
   const showSalespersonSubmissionSection = dashboardRole === "salesperson" && salespersonView === "mine" && mySubmittedVehicles.length > 0;
   const completionEntry = useMemo(() => selectedVehicle ? getCompletionEntry(selectedVehicle) : null, [selectedVehicle]);
   const completedSteps = useMemo(() => selectedVehicle ? getCompletedStepEntries(selectedVehicle) : [], [selectedVehicle]);
-
   if (!authReady) {
     return <div className="auth-shell"><section className="auth-card"><h1>Loading...</h1></section></div>;
   }
@@ -896,7 +971,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <aside className="hero-panel">
+      <header className="top-menu">
         <div className="brand-bar">
           <span className="brand-mark">BMW</span>
           <span className="brand-title">Get Ready</span>
@@ -916,28 +991,21 @@ export default function App() {
           ) : null}
         </div>
 
-        <div className="control-card">
-          <div className="session-card">
-            <div>
-              <strong>{authUser.name}</strong>
-              <p className="session-meta">{roleOptions.find((option) => option.value === authUser.role)?.label} | {authUser.email}</p>
+        <div className="top-actions">
+          {summary ? (
+            <div className="top-stats">
+              <span>Action <strong>{summary.needsAction}</strong></span>
+              <span>Overdue <strong>{summary.overdue}</strong></span>
+              <span>Ready <strong>{summary.ready}</strong></span>
             </div>
-            <button type="button" className="secondary-btn" onClick={handleLogout}>Sign Out</button>
+          ) : null}
+          <div className="session-meta-line">
+            <strong>{authUser.name}</strong>
+            <span>{roleOptions.find((option) => option.value === authUser.role)?.label}</span>
           </div>
-
-          <label>
-            Search
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Stock #, make, model, color..."
-            />
-          </label>
-
-          <button type="button" className="secondary-btn" onClick={() => loadDashboard(search)}>
-            Refresh Dashboard
+          <button type="button" className="secondary-btn" onClick={() => loadDashboard()}>
+            Refresh
           </button>
-
           <button
             type="button"
             className="primary-btn"
@@ -953,33 +1021,52 @@ export default function App() {
           >
             New Get Ready
           </button>
+          <button type="button" className="secondary-btn signout-btn" onClick={handleLogout}>Sign Out</button>
         </div>
-
-        {summary ? (
-          <div className="summary-grid">
-            <StatCard label="Needs My Action" value={summary.needsAction} />
-            <StatCard label="Overdue" value={summary.overdue} danger />
-            <StatCard label="Ready" value={summary.ready} />
-            <StatCard label="Total Units" value={summary.total} />
-          </div>
-        ) : null}
-
-        <div className="calendar-card">
-          <div className="section-heading">
-            <h2>Due Dates</h2>
-          </div>
-          <div className="calendar-list">
-            {calendarItems.map((item) => (
-              <button type="button" key={item.id} className={`calendar-item ${item.overdue ? "danger" : ""}`} onClick={() => openVehicle(item.id)}>
-                <span>{item.title}</span>
-                <strong>{fmtDate(item.due_date)}</strong>
-              </button>
-            ))}
-          </div>
-        </div>
-      </aside>
+      </header>
 
       <main className="workspace">
+        <div className={`quick-search ${searchOpen ? "open" : ""}`}>
+          <button
+            type="button"
+            className="search-icon-btn"
+            aria-label="Search vehicles"
+            onClick={() => setSearchOpen((current) => !current)}
+          />
+          {searchOpen ? (
+            <div className="search-popover">
+              <input
+                autoFocus
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search stock, model, color, notes..."
+              />
+              {search.trim() ? (
+                <div className="search-results">
+                  {searchResults.length > 0 ? searchResults.map((vehicle) => (
+                    <button
+                      type="button"
+                      key={`search-${vehicle.id}`}
+                      className="search-result"
+                      onClick={() => {
+                        setSearchOpen(false);
+                        setSearch("");
+                        openVehicle(vehicle.id);
+                      }}
+                    >
+                      <strong>{vehicle.stock_number}</strong>
+                      <span>{vehicle.year} {vehicle.make} {vehicle.model} | {vehicle.color || "No color"}</span>
+                      <small>
+                        <b>{getSearchResultState(vehicle)}</b> | {formatFieldLabel(vehicle.status)} | Due {fmtDate(vehicle.due_date)}
+                      </small>
+                    </button>
+                  )) : <div className="search-empty">No matches found.</div>}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
         {activeTab === "dashboard" ? (
           <>
             <section className="panel">
@@ -1001,15 +1088,6 @@ export default function App() {
                   </button>
                 </div>
               ) : null}
-
-              <div className="view-toggle">
-                <button type="button" className={`tab-btn ${!showCompleted ? "active" : ""}`} onClick={() => setShowCompleted(false)}>
-                  Active Only
-                </button>
-                <button type="button" className={`tab-btn ${showCompleted ? "active" : ""}`} onClick={() => setShowCompleted(true)}>
-                  {dashboardRole === "salesperson" && salespersonView === "mine" ? "Show My Completed" : "Show Completed"}
-                </button>
-              </div>
 
               {error ? <div className="error-banner">{error}</div> : null}
               {successMessage ? <div className="success-banner">{successMessage}</div> : null}
@@ -1120,18 +1198,12 @@ export default function App() {
               <span className="pill">{calendarVehicles.length}</span>
             </div>
 
-            <div className="view-toggle">
+            <div className="view-toggle compact">
               <button type="button" className={`tab-btn ${calendarView === "agenda" ? "active" : ""}`} onClick={() => setCalendarView("agenda")}>
                 Agenda
               </button>
               <button type="button" className={`tab-btn ${calendarView === "week" ? "active" : ""}`} onClick={() => setCalendarView("week")}>
                 7 Day
-              </button>
-              <button type="button" className={`tab-btn ${!showCompleted ? "active" : ""}`} onClick={() => setShowCompleted(false)}>
-                Incomplete Only
-              </button>
-              <button type="button" className={`tab-btn ${showCompleted ? "active" : ""}`} onClick={() => setShowCompleted(true)}>
-                Include Completed
               </button>
             </div>
 
@@ -1498,7 +1570,29 @@ export default function App() {
                 </div>
               ) : null}
               <p><strong>Status:</strong> {formatFieldLabel(selectedVehicle.status)}</p>
-              <p><strong>Due:</strong> {fmtDate(selectedVehicle.due_date)}</p>
+              <div className="due-edit-row">
+                <div>
+                  <strong>Due:</strong>
+                  <span>{fmtDate(selectedVehicle.due_date)}</span>
+                </div>
+                {canEditDueDate && !selectedVehicle.is_archived ? (
+                  <div className="due-edit-controls">
+                    <input
+                      type="datetime-local"
+                      value={dueDateEdit}
+                      onChange={(event) => setDueDateEdit(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={() => updateVehicleDueDate(selectedVehicle.id)}
+                      disabled={!dueDateEdit || dueDateEdit === toDateTimeLocalValue(selectedVehicle.due_date)}
+                    >
+                      Save Due Date
+                    </button>
+                  </div>
+                ) : null}
+              </div>
               <p><strong>Notes:</strong> {selectedVehicle.notes || "None"}</p>
               {selectedVehicle.needs_service ? <p><strong>{getServiceDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.service_notes || "No service notes"}</p> : null}
               {selectedVehicle.needs_bodywork ? <p><strong>{getBodyworkDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.bodywork_notes || "No body work notes"}</p> : null}
@@ -1603,15 +1697,6 @@ export default function App() {
           </section>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function StatCard({ label, value, danger = false }) {
-  return (
-    <div className={`stat-card ${danger ? "danger" : ""}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
     </div>
   );
 }

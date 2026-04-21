@@ -55,7 +55,7 @@ function canRoleHandleAction(actionKey, role) {
   }
 
   if ([STATUS.DETAIL_STARTED, STATUS.DETAIL_FINISHED].includes(actionKey)) {
-    return role === "detailer";
+    return ["admin", "manager", "detailer", "bmw_genius"].includes(role);
   }
 
   if (["start_service", "complete_service", "start_bodywork", "complete_bodywork", "toggle_recall", "complete_recall"].includes(actionKey)) {
@@ -232,7 +232,9 @@ function isActionAvailable(vehicle, action, currentUserId = null, currentUserRol
   }
 
   if (action.key === STATUS.DETAIL_FINISHED) {
-    return vehicle.status === STATUS.DETAIL_STARTED && (!currentUserId || vehicle.assigned_user_id === currentUserId);
+    const isDetailOwner = !currentUserId || vehicle.assigned_user_id === currentUserId;
+    const canBypassDetailOwnership = ["admin", "manager", "bmw_genius"].includes(currentUserRole);
+    return vehicle.status === STATUS.DETAIL_STARTED && (isDetailOwner || canBypassDetailOwnership);
   }
 
   if (action.key === STATUS.REMOVED_FROM_DETAIL) {

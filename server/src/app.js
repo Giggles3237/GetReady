@@ -211,6 +211,31 @@ function getQueueForRole(vehicle, role, actionDefinitions, userId = null) {
   return buildActionList(vehicle, actionDefinitions, userId, role).some((action) => roleCanHandleAction(action.key, role));
 }
 
+function getVehicleSearchText(vehicle) {
+  return [
+    vehicle.stock_number,
+    vehicle.year,
+    vehicle.make,
+    vehicle.model,
+    vehicle.color,
+    vehicle.status,
+    vehicle.current_location,
+    vehicle.assigned_role,
+    vehicle.notes,
+    vehicle.service_notes,
+    vehicle.bodywork_notes,
+    vehicle.submitted_by?.name,
+    vehicle.submitted_by?.email,
+    vehicle.assigned_user?.name,
+    vehicle.assigned_user?.email,
+    vehicle.pipeline,
+    ...(vehicle.actions ?? []).map((action) => action.label)
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
 const statusOrder = {
   [STATUS.SUBMITTED]: 1,
   [STATUS.TO_DETAIL]: 2,
@@ -1010,12 +1035,18 @@ app.get("/api/vehicles", async (req, res) => {
     decorateVehicle(vehicle, usersById, timelineByVehicleId.get(vehicle.id) ?? [], actionDefinitions, req.currentUser.id)
   );
 
-  let filtered = decorated.filter((vehicle) => includeArchived || !vehicle.is_archived).filter((vehicle) =>
-    getQueueForRole(vehicle, role, actionDefinitions, req.currentUser.id) ||
-    (role === "manager" && vehicle.assigned_role === role) ||
-    (role === "salesperson" && (includeAllSalespersonVehicles || vehicle.submitted_by_user_id === req.currentUser.id)) ||
-    (vehicle.assigned_role === role && (role !== "detailer" || vehicle.status !== STATUS.DETAIL_STARTED || vehicle.assigned_user_id === req.currentUser.id))
-  );
+  let filtered = decorated.filter((vehicle) => includeArchived || !vehicle.is_archived).filter((vehicle) => {
+    if (isAdmin(req.currentUser)) {
+      return vehicle.status !== STATUS.READY || includeArchived;
+    }
+
+    return (
+      getQueueForRole(vehicle, role, actionDefinitions, req.currentUser.id) ||
+      (role === "manager" && vehicle.assigned_role === role) ||
+      (role === "salesperson" && (includeAllSalespersonVehicles || vehicle.submitted_by_user_id === req.currentUser.id)) ||
+      (vehicle.assigned_role === role && (role !== "detailer" || vehicle.status !== STATUS.DETAIL_STARTED || vehicle.assigned_user_id === req.currentUser.id))
+    );
+  });
 
   if (role === "detailer") {
     filtered = filtered.filter((vehicle) => vehicle.status !== STATUS.DETAIL_STARTED || vehicle.assigned_user_id === req.currentUser.id);
@@ -1031,6 +1062,32 @@ app.get("/api/vehicles", async (req, res) => {
   }
 
   res.json({ vehicles: filtered });
+});
+
+app.get("/api/search/vehicles", async (req, res) => {
+  const normalizedSearch = String(req.query.q ?? "").trim().toLowerCase();
+
+  if (!normalizedSearch) {
+    return res.json({ vehicles: [] });
+  }
+
+  const [users, actionDefinitionsRaw, vehiclesRaw] = await Promise.all([
+    listUsers(),
+    listActionDefinitions(),
+    listVehicles()
+  ]);
+  const usersById = new Map(users.map((user) => [user.id, sanitizeUser(user)]));
+  const actionDefinitions = actionDefinitionsRaw.map(normalizeActionDefinition);
+  const vehicles = vehiclesRaw.map(normalizeVehicle).map((vehicle) =>
+    decorateVehicle(vehicle, usersById, [], actionDefinitions, req.currentUser.id)
+  );
+
+  const matches = vehicles
+    .filter((vehicle) => getVehicleSearchText(vehicle).includes(normalizedSearch))
+    .sort((left, right) => new Date(left.due_date).getTime() - new Date(right.due_date).getTime())
+    .slice(0, 12);
+
+  res.json({ vehicles: matches });
 });
 
 app.get("/api/vehicles/:id", async (req, res) => {
@@ -1146,6 +1203,36 @@ app.patch("/api/vehicles/:id/status", async (req, res) => {
     },
     req.currentUser.id,
     "status_change"
+  );
+
+  res.json({ vehicle: nextVehicle });
+});
+
+app.patch("/api/vehicles/:id/due-date", async (req, res) => {
+  const { due_date } = req.body;
+  const vehicleRow = await getVehicle(req.params.id);
+
+  if (!vehicleRow) {
+    return res.status(404).json({ message: "Vehicle not found." });
+  }
+
+  if (!["admin", "manager", "salesperson"].includes(req.currentUser.role)) {
+    return res.status(403).json({ message: "Only Salespeople, Managers, and Admins can change the due date." });
+  }
+
+  const nextDueDate = new Date(due_date);
+  if (!due_date || Number.isNaN(nextDueDate.getTime())) {
+    return res.status(400).json({ message: "A valid due date and time is required." });
+  }
+
+  const vehicle = normalizeVehicle(vehicleRow);
+  const nextVehicle = await updateVehicleWithAudit(
+    vehicle.id,
+    {
+      due_date: nextDueDate.toISOString()
+    },
+    req.currentUser.id,
+    "due_date_update"
   );
 
   res.json({ vehicle: nextVehicle });
