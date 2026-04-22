@@ -55,16 +55,23 @@ function hasManagerAccess(user) {
 }
 
 function buildAllowedOrigins() {
+  const defaults = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "capacitor://localhost",
+    "ionic://localhost",
+    "http://localhost"
+  ];
   const configured = String(process.env.CORS_ORIGIN ?? "")
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
 
   if (configured.length > 0) {
-    return configured;
+    return [...new Set([...configured, ...defaults])];
   }
 
-  return ["http://localhost:5173", "http://127.0.0.1:5173"];
+  return defaults;
 }
 
 const allowedOrigins = buildAllowedOrigins();

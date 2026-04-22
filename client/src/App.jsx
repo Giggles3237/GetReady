@@ -1,7 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import { Capacitor } from "@capacitor/core";
 
-const API_URL = (import.meta.env.VITE_API_URL || "/api").replace(/\/$/, "");
+const IS_NATIVE_APP = Capacitor.isNativePlatform();
+const API_URL = resolveApiUrl();
 const AUTO_REFRESH_INTERVAL_MS = 15000;
+
+function resolveApiUrl() {
+  const explicitWebApiUrl = import.meta.env.VITE_API_URL;
+  const explicitNativeApiUrl = import.meta.env.VITE_CAPACITOR_API_URL;
+  const fallbackApiUrl = IS_NATIVE_APP ? (explicitNativeApiUrl || explicitWebApiUrl) : (explicitWebApiUrl || "/api");
+
+  return String(fallbackApiUrl || "/api").replace(/\/$/, "");
+}
 
 const roleOptions = [
   { value: "admin", label: "Admin" },

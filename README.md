@@ -40,6 +40,44 @@ npm run dev
 
 The frontend runs on `http://localhost:5173`.
 
+### 3. Capacitor iOS shell
+
+Capacitor has been added under `client/` so the React app can run inside a native iOS container.
+
+Important:
+
+- You can prepare and sync the project from Windows
+- You still need macOS with Xcode to build, sign, and run the iOS app
+- For native builds, do not rely on `"/api"` unless your backend is available at the same origin
+
+Frontend environment variables:
+
+- `VITE_API_URL` for the normal web app
+- `VITE_CAPACITOR_API_URL` for the native Capacitor app
+
+Example:
+
+```bash
+VITE_API_URL=http://127.0.0.1:4000/api
+VITE_CAPACITOR_API_URL=https://your-render-service.onrender.com/api
+```
+
+Capacitor commands:
+
+```bash
+cd client
+npm run cap:sync
+```
+
+On a Mac:
+
+```bash
+cd client
+npm run cap:open:ios
+```
+
+The backend now also allows common Capacitor origins such as `capacitor://localhost`, which is needed for authenticated requests from the native shell.
+
 ## Authentication
 
 - The app now uses session-based login with hashed passwords
