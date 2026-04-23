@@ -665,18 +665,20 @@ app.get("/api/health", async (_req, res) => {
 app.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: "Email and password are required." });
+  if (!email) {
+    return res.status(400).json({ message: "Email is required." });
   }
 
   const user = await getUserByEmail(email);
-  if (!user || !user.password_hash || !user.is_active) {
-    return res.status(401).json({ message: "Invalid email or password." });
+  if (!user || !user.is_active) {
+    return res.status(401).json({ message: "Invalid email." });
   }
 
-  const validPassword = await bcrypt.compare(password, user.password_hash);
-  if (!validPassword) {
-    return res.status(401).json({ message: "Invalid email or password." });
+  if (password && user.password_hash) {
+    const validPassword = await bcrypt.compare(password, user.password_hash);
+    if (!validPassword) {
+      return res.status(401).json({ message: "Invalid password." });
+    }
   }
 
   req.session.userId = user.id;
