@@ -401,7 +401,6 @@ function AuthScreen({ loginForm, setLoginForm, onSubmit, error }) {
               type="password"
               value={loginForm.password}
               onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
-              required
             />
           </label>
           <button className="primary-btn" type="submit">Sign In</button>
