@@ -1104,10 +1104,13 @@ app.get("/api/vehicles", async (req, res) => {
       return vehicle.status !== STATUS.READY || includeArchived;
     }
 
+    if (role === "salesperson") {
+      return includeAllSalespersonVehicles || vehicle.submitted_by_user_id === req.currentUser.id;
+    }
+
     return (
       getQueueForRole(vehicle, role, actionDefinitions, req.currentUser.id) ||
       (role === "manager" && vehicle.assigned_role === role) ||
-      (role === "salesperson" && (includeAllSalespersonVehicles || vehicle.submitted_by_user_id === req.currentUser.id)) ||
       (vehicle.assigned_role === role && (role !== "detailer" || vehicle.status !== STATUS.DETAIL_STARTED || vehicle.assigned_user_id === req.currentUser.id))
     );
   });
