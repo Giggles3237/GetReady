@@ -1,8 +1,8 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import cors from "cors";
 import express from "express";
-import session from "express-session";
 import { v4 as uuid } from "uuid";
 import {
   ROLE_LABELS,
@@ -19,7 +19,6 @@ import {
 } from "./workflow.js";
 import {
   getPool,
-  ensureSessionTable,
   listActionDefinitions,
   listUsers,
   getUser,
@@ -33,15 +32,15 @@ import {
   updateUserPassword,
   insertVehicle,
   replaceVehicle,
-  insertAuditLog,
-  toMySqlDateTime
+  insertAuditLog
 } from "./db.js";
 
 const app = express();
 const port = process.env.PORT || 4000;
 const isProduction = process.env.NODE_ENV === "production";
-const sessionTtlDays = Math.max(Number(process.env.SESSION_TTL_DAYS || 90), 1);
-const sessionMaxAgeMs = sessionTtlDays * 24 * 60 * 60 * 1000;
+const authTokenTtlDays = Math.max(Number(process.env.AUTH_TOKEN_TTL_DAYS || process.env.SESSION_TTL_DAYS || 90), 1);
+const authTokenMaxAgeMs = authTokenTtlDays * 24 * 60 * 60 * 1000;
+const jwtSecret = process.env.JWT_SECRET || process.env.SESSION_SECRET || "change-me-in-production";
 const integrationKeys = [
   process.env.BOPCHIPBOARD_API_KEY,
   ...String(process.env.INTEGRATION_API_KEYS ?? "")
@@ -80,77 +79,6 @@ function buildAllowedOrigins() {
 
 const allowedOrigins = buildAllowedOrigins();
 
-class MySqlSessionStore extends session.Store {
-  constructor(pool) {
-    super();
-    this.pool = pool;
-  }
-
-  get(sessionId, callback) {
-    (async () => {
-      const [rows] = await this.pool.query(
-        "SELECT data, expires_at FROM user_sessions WHERE session_id = ? LIMIT 1",
-        [sessionId]
-      );
-      const row = rows[0];
-
-      if (!row) {
-        callback(null, null);
-        return;
-      }
-
-      const expiresAt = new Date(row.expires_at);
-      if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
-        await this.pool.query("DELETE FROM user_sessions WHERE session_id = ?", [sessionId]);
-        callback(null, null);
-        return;
-      }
-
-      callback(null, JSON.parse(row.data));
-    })().catch((error) => callback(error));
-  }
-
-  set(sessionId, sess, callback) {
-    (async () => {
-      const expiresAt = this.resolveExpiry(sess);
-      await this.pool.query(
-        `INSERT INTO user_sessions (session_id, expires_at, data)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), data = VALUES(data)`,
-        [sessionId, toMySqlDateTime(expiresAt), JSON.stringify(sess)]
-      );
-      callback(null);
-    })().catch((error) => callback(error));
-  }
-
-  touch(sessionId, sess, callback) {
-    (async () => {
-      const expiresAt = this.resolveExpiry(sess);
-      await this.pool.query(
-        "UPDATE user_sessions SET expires_at = ?, data = ? WHERE session_id = ?",
-        [toMySqlDateTime(expiresAt), JSON.stringify(sess), sessionId]
-      );
-      callback(null);
-    })().catch((error) => callback(error));
-  }
-
-  destroy(sessionId, callback) {
-    (async () => {
-      await this.pool.query("DELETE FROM user_sessions WHERE session_id = ?", [sessionId]);
-      callback(null);
-    })().catch((error) => callback(error));
-  }
-
-  resolveExpiry(sess) {
-    const explicitExpires = sess?.cookie?.expires ? new Date(sess.cookie.expires) : null;
-    if (explicitExpires && !Number.isNaN(explicitExpires.getTime())) {
-      return explicitExpires;
-    }
-
-    return new Date(Date.now() + sessionMaxAgeMs);
-  }
-}
-
 function readIntegrationKey(req) {
   const headerKey = req.get("x-integration-key");
   if (headerKey) {
@@ -163,6 +91,74 @@ function readIntegrationKey(req) {
   }
 
   return "";
+}
+
+function normalizeEmail(value) {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function toBase64Url(value) {
+  return Buffer.from(value)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function fromBase64Url(value) {
+  const normalized = String(value)
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  const padding = normalized.length % 4 === 0 ? "" : "=".repeat(4 - (normalized.length % 4));
+  return Buffer.from(`${normalized}${padding}`, "base64").toString("utf8");
+}
+
+function signAuthToken(user) {
+  const header = { alg: "HS256", typ: "JWT" };
+  const payload = {
+    sub: user.id,
+    email: normalizeEmail(user.email),
+    role: user.role,
+    name: user.name,
+    exp: Math.floor((Date.now() + authTokenMaxAgeMs) / 1000)
+  };
+  const encodedHeader = toBase64Url(JSON.stringify(header));
+  const encodedPayload = toBase64Url(JSON.stringify(payload));
+  const signature = crypto
+    .createHmac("sha256", jwtSecret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+
+  return `${encodedHeader}.${encodedPayload}.${signature}`;
+}
+
+function verifyAuthToken(token) {
+  const [encodedHeader, encodedPayload, signature] = String(token || "").split(".");
+  if (!encodedHeader || !encodedPayload || !signature) {
+    throw new Error("Malformed token.");
+  }
+
+  const expectedSignature = crypto
+    .createHmac("sha256", jwtSecret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+
+  if (signature !== expectedSignature) {
+    throw new Error("Invalid token signature.");
+  }
+
+  const payload = JSON.parse(fromBase64Url(encodedPayload));
+  if (!payload?.sub || !payload?.exp || payload.exp * 1000 <= Date.now()) {
+    throw new Error("Token expired.");
+  }
+
+  return payload;
 }
 
 function requireBopchipboardKey(req, res, next) {
@@ -194,20 +190,6 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
-app.use(session({
-  name: "getready.sid",
-  secret: process.env.SESSION_SECRET || "change-me-in-production",
-  resave: false,
-  saveUninitialized: false,
-  rolling: true,
-  store: new MySqlSessionStore(getPool()),
-  cookie: {
-    httpOnly: true,
-    sameSite: isProduction ? "none" : "lax",
-    secure: isProduction,
-    maxAge: sessionMaxAgeMs
-  }
-}));
 
 function sanitizeUser(user) {
   if (!user) {
@@ -687,15 +669,18 @@ async function updateVehicleWithAudit(vehicleId, changes, userId, actionType) {
 }
 
 async function loadSessionUser(req, _res, next) {
-  if (!req.session?.userId) {
+  const authHeader = req.get("authorization");
+  if (!authHeader?.toLowerCase().startsWith("bearer ")) {
     req.currentUser = null;
     next();
     return;
   }
 
-  req.currentUser = sanitizeUser(await getUser(req.session.userId));
-  if (!req.currentUser || !req.currentUser.is_active) {
-    req.session.destroy(() => {});
+  try {
+    const payload = verifyAuthToken(authHeader.slice(7).trim());
+    const user = await getUser(payload.sub);
+    req.currentUser = user?.is_active ? sanitizeUser(user) : null;
+  } catch {
     req.currentUser = null;
   }
 
@@ -747,7 +732,7 @@ app.get("/api/health", async (_req, res) => {
 });
 
 app.post("/api/auth/login", async (req, res) => {
-  const { email, password } = req.body;
+  const email = normalizeEmail(req.body?.email);
 
   if (!email) {
     return res.status(400).json({ message: "Email is required." });
@@ -758,21 +743,14 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(401).json({ message: "Invalid email." });
   }
 
-  if (password && user.password_hash) {
-    const validPassword = await bcrypt.compare(password, user.password_hash);
-    if (!validPassword) {
-      return res.status(401).json({ message: "Invalid password." });
-    }
-  }
-
-  req.session.userId = user.id;
-  res.json({ user: sanitizeUser(user) });
+  res.json({
+    token: signAuthToken(user),
+    user: sanitizeUser(user)
+  });
 });
 
 app.post("/api/auth/logout", (req, res) => {
-  req.session.destroy(() => {
-    res.json({ ok: true });
-  });
+  res.json({ ok: true });
 });
 
 app.get("/api/auth/me", (req, res) => {
@@ -1431,7 +1409,6 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(port, async () => {
-  await ensureSessionTable();
   await getPool().query("SELECT 1");
-  console.log(`Get Ready API listening on ${port} with ${sessionTtlDays}-day sessions`);
+  console.log(`Get Ready API listening on ${port} with ${authTokenTtlDays}-day auth tokens`);
 });

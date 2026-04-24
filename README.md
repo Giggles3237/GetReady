@@ -80,9 +80,9 @@ The backend now also allows common Capacitor origins such as `capacitor://localh
 
 ## Authentication
 
-- The app now uses session-based login with hashed passwords
-- Sessions are persisted in MySQL so logins survive backend restarts
-- Session cookies default to a 90-day sliding expiration
+- The app now uses token-based login instead of browser session cookies
+- The frontend stores the auth token locally and sends it with each API request
+- Auth tokens default to a 90-day expiration
 - Existing demo users can be bootstrapped with:
 
 ```bash
@@ -132,7 +132,8 @@ Required Render environment variables:
 - `DB_PASSWORD`
 - `DB_SSL=true`
 - `SESSION_SECRET`
-- `SESSION_TTL_DAYS` optional, defaults to `90`
+- `JWT_SECRET` optional, falls back to `SESSION_SECRET` if omitted
+- `AUTH_TOKEN_TTL_DAYS` optional, defaults to `90`
 - `BOPCHIPBOARD_API_KEY`
 - `PORT=4000`
 

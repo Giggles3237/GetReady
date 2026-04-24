@@ -5,6 +5,7 @@ const IS_NATIVE_APP = Capacitor.isNativePlatform();
 const API_URL_CANDIDATES = resolveApiUrlCandidates();
 let preferredApiUrl = API_URL_CANDIDATES[0] ?? "/api";
 const AUTO_REFRESH_INTERVAL_MS = 15000;
+const AUTH_STORAGE_KEY = "getready.auth";
 
 function resolveApiUrlCandidates() {
   const explicitWebApiUrl = import.meta.env.VITE_API_URL;
@@ -19,6 +20,32 @@ function resolveApiUrlCandidates() {
       .filter(Boolean)
       .map((value) => String(value).replace(/\/$/, ""))
   )];
+}
+
+function getStoredAuth() {
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) {
+      return { token: "", user: null };
+    }
+
+    const parsed = JSON.parse(raw);
+    return {
+      token: typeof parsed?.token === "string" ? parsed.token : "",
+      user: parsed?.user ?? null
+    };
+  } catch {
+    return { token: "", user: null };
+  }
+}
+
+function persistAuth(auth) {
+  if (!auth?.token || !auth?.user) {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
 }
 
 const roleOptions = [
@@ -388,10 +415,11 @@ async function request(path, options = {}) {
     let response;
 
     try {
+      const { token } = getStoredAuth();
       response = await fetch(`${baseUrl}${path}`, {
-        credentials: "include",
         headers: {
           "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...(options.headers ?? {})
         },
         ...options
@@ -459,7 +487,7 @@ function AuthScreen({ loginForm, setLoginForm, onSubmit, error }) {
       <section className="auth-card">
         <p className="eyebrow">Get Ready Tracking System</p>
         <h1>Sign In</h1>
-        <p className="lead">Use your dealership login to access your task queue and audit trail.</p>
+        <p className="lead">Enter your dealership email to access your task queue and audit trail.</p>
         {error ? <div className="error-banner">{error}</div> : null}
         <form className="control-card auth-form" onSubmit={onSubmit}>
           <label>
@@ -472,13 +500,6 @@ function AuthScreen({ loginForm, setLoginForm, onSubmit, error }) {
               autoComplete="email"
             />
           </label>
-          <PasswordField
-            label="Password"
-            value={loginForm.password}
-            onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
-            required
-            autoComplete="current-password"
-          />
           <button className="primary-btn" type="submit">Sign In</button>
         </form>
       </section>
@@ -518,8 +539,9 @@ function PasswordChangeScreen({ passwordForm, setPasswordForm, onSubmit, error, 
 }
 
 export default function App() {
+  const initialAuth = getStoredAuth();
   const [authReady, setAuthReady] = useState(false);
-  const [authUser, setAuthUser] = useState(null);
+  const [authUser, setAuthUser] = useState(initialAuth.user);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [adminSection, setAdminSection] = useState("steps");
   const [users, setUsers] = useState([]);
@@ -542,7 +564,7 @@ export default function App() {
   const [auditFeed, setAuditFeed] = useState([]);
   const [archivedVehicles, setArchivedVehicles] = useState([]);
   const [temporaryPassword, setTemporaryPassword] = useState("");
-  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [loginForm, setLoginForm] = useState({ email: "" });
   const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
   const [newUser, setNewUser] = useState({ name: "", email: "", role: "salesperson" });
   const [submission, setSubmission] = useState({
@@ -576,10 +598,19 @@ export default function App() {
   );
 
   async function syncSession() {
+    const { token } = getStoredAuth();
+    if (!token) {
+      setAuthUser(null);
+      setAuthReady(true);
+      return;
+    }
+
     try {
       const data = await request("/auth/me");
       setAuthUser(data.user);
+      persistAuth({ token, user: data.user });
     } catch {
+      persistAuth(null);
       setAuthUser(null);
     } finally {
       setAuthReady(true);
@@ -621,7 +652,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!authUser || authUser.must_change_password) {
+    if (!authUser) {
       return;
     }
 
@@ -640,7 +671,7 @@ export default function App() {
   }, [authUser]);
 
   useEffect(() => {
-    if (!authUser || authUser.must_change_password) {
+    if (!authUser) {
       return undefined;
     }
 
@@ -683,19 +714,26 @@ export default function App() {
 
     try {
       setError("");
+      const normalizedEmail = loginForm.email.trim().toLowerCase();
       const data = await request("/auth/login", {
         method: "POST",
-        body: JSON.stringify(loginForm)
+        body: JSON.stringify({ email: normalizedEmail })
       });
+      persistAuth({ token: data.token, user: data.user });
       setAuthUser(data.user);
-      setLoginForm({ email: "", password: "" });
+      setLoginForm({ email: "" });
     } catch (err) {
       setError(err.message);
     }
   }
 
   async function handleLogout() {
-    await request("/auth/logout", { method: "POST", body: JSON.stringify({}) });
+    try {
+      await request("/auth/logout", { method: "POST", body: JSON.stringify({}) });
+    } catch {
+      // Clear local auth even if the server cannot be reached.
+    }
+    persistAuth(null);
     setAuthUser(null);
     setUsers([]);
     setVehicles([]);
@@ -1034,10 +1072,6 @@ export default function App() {
 
   if (!authUser) {
     return <AuthScreen loginForm={loginForm} setLoginForm={setLoginForm} onSubmit={handleLogin} error={error} />;
-  }
-
-  if (authUser.must_change_password) {
-    return <PasswordChangeScreen passwordForm={passwordForm} setPasswordForm={setPasswordForm} onSubmit={handlePasswordChange} error={error} user={authUser} />;
   }
 
   return (

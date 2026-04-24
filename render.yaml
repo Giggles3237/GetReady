@@ -22,9 +22,11 @@ services:
         value: "true"
       - key: PORT
         value: "4000"
+      - key: JWT_SECRET
+        sync: false
       - key: SESSION_SECRET
         sync: false
-      - key: SESSION_TTL_DAYS
+      - key: AUTH_TOKEN_TTL_DAYS
         value: "90"
       - key: CORS_ORIGIN
         sync: false
