@@ -350,6 +350,75 @@ h3 {
 
 .auth-form {
   margin-top: 0;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.auth-form > .primary-btn {
+  width: 100%;
+}
+
+.password-field {
+  position: relative;
+  display: block;
+}
+
+.password-field input {
+  padding-right: 46px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 1px;
+  transform: translateY(-50%);
+  width: 42px;
+  height: calc(100% - 2px);
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.password-toggle:hover,
+.password-toggle:focus-visible {
+  color: var(--accent-2);
+  outline: none;
+}
+
+.eye-icon {
+  position: relative;
+  width: 18px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-radius: 999px / 80%;
+}
+
+.eye-icon::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  background: currentColor;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.eye-icon.visible::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 20px;
+  height: 2px;
+  background: currentColor;
+  transform: translate(-50%, -50%) rotate(-28deg);
 }
 
 label {
@@ -1130,6 +1199,11 @@ select {
   .control-card > .primary-btn {
     white-space: nowrap;
   }
+
+  .auth-form.control-card {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1185,11 +1259,27 @@ select {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 10px;
+    padding: 10px;
+    background: var(--panel-strong);
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow);
     z-index: 20;
   }
 
   .mobile-tabbar-two {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .mobile-tabbar .tab-btn {
+    padding: 12px 10px;
+    background: #eef3f8;
+    border: 1px solid rgba(17, 24, 32, 0.08);
+  }
+
+  .mobile-tabbar .tab-btn.active {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
   }
 
   .user-list-head,

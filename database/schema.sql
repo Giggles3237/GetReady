@@ -68,6 +68,14 @@ CREATE TABLE audit_logs (
   CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+CREATE TABLE user_sessions (
+  session_id VARCHAR(191) PRIMARY KEY,
+  expires_at DATETIME NOT NULL,
+  data LONGTEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
 CREATE INDEX idx_users_role ON users(role);
 
 CREATE INDEX idx_actions_role_enabled ON action_definitions(role, enabled, sort_order);
@@ -80,3 +88,4 @@ CREATE INDEX idx_vehicle_assigned_user ON vehicles(assigned_user_id);
 CREATE INDEX idx_audit_vehicle_created ON audit_logs(vehicle_id, created_at);
 CREATE INDEX idx_audit_user_created ON audit_logs(user_id, created_at);
 CREATE INDEX idx_audit_action_created ON audit_logs(action_type, created_at);
+CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);

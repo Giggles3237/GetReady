@@ -387,6 +387,36 @@ async function request(path, options = {}) {
   return response.json();
 }
 
+function PasswordField({ label, value, onChange, required = false, minLength, autoComplete }) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <label>
+      {label}
+      <span className="password-field">
+        <input
+          type={visible ? "text" : "password"}
+          value={value}
+          onChange={onChange}
+          required={required}
+          minLength={minLength}
+          autoComplete={autoComplete}
+        />
+        <button
+          type="button"
+          className="password-toggle"
+          onClick={() => setVisible((current) => !current)}
+          aria-label={visible ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+          aria-pressed={visible}
+          title={visible ? "Hide password" : "Show password"}
+        >
+          <span className={`eye-icon${visible ? " visible" : ""}`} aria-hidden="true" />
+        </button>
+      </span>
+    </label>
+  );
+}
+
 function AuthScreen({ loginForm, setLoginForm, onSubmit, error }) {
   return (
     <div className="auth-shell">
@@ -403,16 +433,16 @@ function AuthScreen({ loginForm, setLoginForm, onSubmit, error }) {
               value={loginForm.email}
               onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
               required
+              autoComplete="email"
             />
           </label>
-          <label>
-            Password
-            <input
-              type="password"
-              value={loginForm.password}
-              onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
-            />
-          </label>
+          <PasswordField
+            label="Password"
+            value={loginForm.password}
+            onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
+            required
+            autoComplete="current-password"
+          />
           <button className="primary-btn" type="submit">Sign In</button>
         </form>
       </section>
@@ -429,25 +459,21 @@ function PasswordChangeScreen({ passwordForm, setPasswordForm, onSubmit, error, 
         <p className="lead">Your temporary password worked. Please set a new permanent password before continuing.</p>
         {error ? <div className="error-banner">{error}</div> : null}
         <form className="control-card auth-form" onSubmit={onSubmit}>
-          <label>
-            Current Password
-            <input
-              type="password"
-              value={passwordForm.currentPassword}
-              onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))}
-              required
-            />
-          </label>
-          <label>
-            New Password
-            <input
-              type="password"
-              value={passwordForm.newPassword}
-              onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))}
-              required
-              minLength={8}
-            />
-          </label>
+          <PasswordField
+            label="Current Password"
+            value={passwordForm.currentPassword}
+            onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))}
+            required
+            autoComplete="current-password"
+          />
+          <PasswordField
+            label="New Password"
+            value={passwordForm.newPassword}
+            onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))}
+            required
+            minLength={8}
+            autoComplete="new-password"
+          />
           <button className="primary-btn" type="submit">Save Password</button>
         </form>
       </section>

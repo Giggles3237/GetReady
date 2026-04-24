@@ -19,6 +19,7 @@ import {
 } from "./workflow.js";
 import {
   getPool,
+  ensureSessionTable,
   listActionDefinitions,
   listUsers,
   getUser,
@@ -32,12 +33,15 @@ import {
   updateUserPassword,
   insertVehicle,
   replaceVehicle,
-  insertAuditLog
+  insertAuditLog,
+  toMySqlDateTime
 } from "./db.js";
 
 const app = express();
 const port = process.env.PORT || 4000;
 const isProduction = process.env.NODE_ENV === "production";
+const sessionTtlDays = Math.max(Number(process.env.SESSION_TTL_DAYS || 90), 1);
+const sessionMaxAgeMs = sessionTtlDays * 24 * 60 * 60 * 1000;
 const integrationKeys = [
   process.env.BOPCHIPBOARD_API_KEY,
   ...String(process.env.INTEGRATION_API_KEYS ?? "")
@@ -75,6 +79,77 @@ function buildAllowedOrigins() {
 }
 
 const allowedOrigins = buildAllowedOrigins();
+
+class MySqlSessionStore extends session.Store {
+  constructor(pool) {
+    super();
+    this.pool = pool;
+  }
+
+  get(sessionId, callback) {
+    (async () => {
+      const [rows] = await this.pool.query(
+        "SELECT data, expires_at FROM user_sessions WHERE session_id = ? LIMIT 1",
+        [sessionId]
+      );
+      const row = rows[0];
+
+      if (!row) {
+        callback(null, null);
+        return;
+      }
+
+      const expiresAt = new Date(row.expires_at);
+      if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
+        await this.pool.query("DELETE FROM user_sessions WHERE session_id = ?", [sessionId]);
+        callback(null, null);
+        return;
+      }
+
+      callback(null, JSON.parse(row.data));
+    })().catch((error) => callback(error));
+  }
+
+  set(sessionId, sess, callback) {
+    (async () => {
+      const expiresAt = this.resolveExpiry(sess);
+      await this.pool.query(
+        `INSERT INTO user_sessions (session_id, expires_at, data)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE expires_at = VALUES(expires_at), data = VALUES(data)`,
+        [sessionId, toMySqlDateTime(expiresAt), JSON.stringify(sess)]
+      );
+      callback(null);
+    })().catch((error) => callback(error));
+  }
+
+  touch(sessionId, sess, callback) {
+    (async () => {
+      const expiresAt = this.resolveExpiry(sess);
+      await this.pool.query(
+        "UPDATE user_sessions SET expires_at = ?, data = ? WHERE session_id = ?",
+        [toMySqlDateTime(expiresAt), JSON.stringify(sess), sessionId]
+      );
+      callback(null);
+    })().catch((error) => callback(error));
+  }
+
+  destroy(sessionId, callback) {
+    (async () => {
+      await this.pool.query("DELETE FROM user_sessions WHERE session_id = ?", [sessionId]);
+      callback(null);
+    })().catch((error) => callback(error));
+  }
+
+  resolveExpiry(sess) {
+    const explicitExpires = sess?.cookie?.expires ? new Date(sess.cookie.expires) : null;
+    if (explicitExpires && !Number.isNaN(explicitExpires.getTime())) {
+      return explicitExpires;
+    }
+
+    return new Date(Date.now() + sessionMaxAgeMs);
+  }
+}
 
 function readIntegrationKey(req) {
   const headerKey = req.get("x-integration-key");
@@ -124,11 +199,13 @@ app.use(session({
   secret: process.env.SESSION_SECRET || "change-me-in-production",
   resave: false,
   saveUninitialized: false,
+  rolling: true,
+  store: new MySqlSessionStore(getPool()),
   cookie: {
     httpOnly: true,
     sameSite: isProduction ? "none" : "lax",
     secure: isProduction,
-    maxAge: 1000 * 60 * 60 * 12
+    maxAge: sessionMaxAgeMs
   }
 }));
 
@@ -1354,6 +1431,7 @@ app.use((err, _req, res, _next) => {
 });
 
 app.listen(port, async () => {
+  await ensureSessionTable();
   await getPool().query("SELECT 1");
-  console.log(`Get Ready API listening on ${port}`);
+  console.log(`Get Ready API listening on ${port} with ${sessionTtlDays}-day sessions`);
 });

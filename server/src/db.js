@@ -43,6 +43,19 @@ export function getPool() {
   return pool;
 }
 
+export async function ensureSessionTable() {
+  await runQuery(`
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      session_id VARCHAR(191) PRIMARY KEY,
+      expires_at DATETIME NOT NULL,
+      data LONGTEXT NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_user_sessions_expires_at (expires_at)
+    )
+  `);
+}
+
 async function runQuery(sql, params = [], connection = null) {
   const executor = connection ?? getPool();
   const [rows] = await executor.query(sql, params);
