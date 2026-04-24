@@ -6,8 +6,11 @@ const API_URL = resolveApiUrl();
 const AUTO_REFRESH_INTERVAL_MS = 15000;
 
 function resolveApiUrl() {
+  const explicitWebApiUrl = import.meta.env.VITE_API_URL;
   const explicitNativeApiUrl = import.meta.env.VITE_CAPACITOR_API_URL;
-  const fallbackApiUrl = IS_NATIVE_APP ? (explicitNativeApiUrl || "/api") : "/api";
+  const fallbackApiUrl = IS_NATIVE_APP
+    ? (explicitNativeApiUrl || explicitWebApiUrl || "/api")
+    : (explicitWebApiUrl || "/api");
 
   return String(fallbackApiUrl || "/api").replace(/\/$/, "");
 }
@@ -369,21 +372,26 @@ function groupVehiclesByAction(vehicles, role) {
 }
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_URL}${path}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers ?? {})
-    },
-    ...options
-  });
+  let response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers ?? {})
+      },
+      ...options
+    });
+  } catch {
+    throw new Error("Unable to reach the server.");
+  }
 
   if (!response.ok) {
-    const data = await response.json().catch(() => ({ message: "Request failed." }));
+    const data = await response.json().catch(() => ({ message: response.status ? `Request failed (${response.status}).` : "Request failed." }));
     throw new Error(data.message || "Request failed.");
   }
 
-  return response.json();
+  return response.json().catch(() => ({}));
 }
 
 function PasswordField({ label, value, onChange, required = false, minLength, autoComplete }) {

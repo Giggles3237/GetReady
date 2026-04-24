@@ -52,11 +52,13 @@ Important:
 
 Frontend environment variables:
 
+- `VITE_API_URL` for the normal web app when the frontend is not proxying `/api`
 - `VITE_CAPACITOR_API_URL` for the native Capacitor app
 
 Example:
 
 ```bash
+VITE_API_URL=http://127.0.0.1:4000/api
 VITE_CAPACITOR_API_URL=https://your-render-service.onrender.com/api
 ```
 
@@ -145,13 +147,17 @@ Vercel project settings:
 - Build command: `npm run build`
 - Output directory: `dist`
 
-Vercel should proxy `/api/*` requests to the Render backend so browser sessions stay first-party on mobile devices.
+If the web frontend is hosted on Vercel, it can proxy `/api/*` requests to the Render backend so browser sessions stay first-party on mobile devices.
 
 Current repo config:
 
 - `client/vercel.json` rewrites `/api/(.*)` to `https://get-ready-api.onrender.com/api/$1`
 
-For native Capacitor builds only, set:
+For direct web-to-API deployments, set:
+
+- `VITE_API_URL=https://your-render-service.onrender.com/api`
+
+For native Capacitor builds, set:
 
 - `VITE_CAPACITOR_API_URL=https://your-render-service.onrender.com/api`
 
