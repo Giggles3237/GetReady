@@ -410,7 +410,7 @@ async function request(path, options = {}) {
     if (!response.ok) {
       const data = await response.json().catch(() => ({ message: response.status ? `Request failed (${response.status}).` : "Request failed." }));
       lastError = new Error(data.message || "Request failed.");
-      if (response.status >= 500) {
+      if (response.status === 404 || response.status >= 500) {
         continue;
       }
       throw lastError;
