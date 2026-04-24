@@ -6,9 +6,8 @@ const API_URL = resolveApiUrl();
 const AUTO_REFRESH_INTERVAL_MS = 15000;
 
 function resolveApiUrl() {
-  const explicitWebApiUrl = import.meta.env.VITE_API_URL;
   const explicitNativeApiUrl = import.meta.env.VITE_CAPACITOR_API_URL;
-  const fallbackApiUrl = IS_NATIVE_APP ? (explicitNativeApiUrl || explicitWebApiUrl) : (explicitWebApiUrl || "/api");
+  const fallbackApiUrl = IS_NATIVE_APP ? (explicitNativeApiUrl || "/api") : "/api";
 
   return String(fallbackApiUrl || "/api").replace(/\/$/, "");
 }

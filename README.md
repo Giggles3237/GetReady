@@ -52,13 +52,11 @@ Important:
 
 Frontend environment variables:
 
-- `VITE_API_URL` for the normal web app
 - `VITE_CAPACITOR_API_URL` for the native Capacitor app
 
 Example:
 
 ```bash
-VITE_API_URL=http://127.0.0.1:4000/api
 VITE_CAPACITOR_API_URL=https://your-render-service.onrender.com/api
 ```
 
@@ -147,9 +145,15 @@ Vercel project settings:
 - Build command: `npm run build`
 - Output directory: `dist`
 
-Required Vercel environment variable:
+Vercel should proxy `/api/*` requests to the Render backend so browser sessions stay first-party on mobile devices.
 
-- `VITE_API_URL=https://your-render-service.onrender.com/api`
+Current repo config:
+
+- `client/vercel.json` rewrites `/api/(.*)` to `https://get-ready-api.onrender.com/api/$1`
+
+For native Capacitor builds only, set:
+
+- `VITE_CAPACITOR_API_URL=https://your-render-service.onrender.com/api`
 
 ## Bopchipboard integration
 
