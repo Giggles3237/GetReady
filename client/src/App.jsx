@@ -2,17 +2,23 @@ import { useEffect, useMemo, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 
 const IS_NATIVE_APP = Capacitor.isNativePlatform();
-const API_URL = resolveApiUrl();
+const API_URL_CANDIDATES = resolveApiUrlCandidates();
+let preferredApiUrl = API_URL_CANDIDATES[0] ?? "/api";
 const AUTO_REFRESH_INTERVAL_MS = 15000;
 
-function resolveApiUrl() {
+function resolveApiUrlCandidates() {
   const explicitWebApiUrl = import.meta.env.VITE_API_URL;
   const explicitNativeApiUrl = import.meta.env.VITE_CAPACITOR_API_URL;
-  const fallbackApiUrl = IS_NATIVE_APP
-    ? (explicitNativeApiUrl || explicitWebApiUrl || "/api")
-    : (explicitWebApiUrl || "/api");
 
-  return String(fallbackApiUrl || "/api").replace(/\/$/, "");
+  const candidates = IS_NATIVE_APP
+    ? [explicitNativeApiUrl, explicitWebApiUrl, "/api"]
+    : ["/api", explicitWebApiUrl];
+
+  return [...new Set(
+    candidates
+      .filter(Boolean)
+      .map((value) => String(value).replace(/\/$/, ""))
+  )];
 }
 
 const roleOptions = [
@@ -372,26 +378,49 @@ function groupVehiclesByAction(vehicles, role) {
 }
 
 async function request(path, options = {}) {
-  let response;
-  try {
-    response = await fetch(`${API_URL}${path}`, {
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers ?? {})
-      },
-      ...options
-    });
-  } catch {
-    throw new Error("Unable to reach the server.");
+  const orderedBaseUrls = [
+    preferredApiUrl,
+    ...API_URL_CANDIDATES.filter((candidate) => candidate !== preferredApiUrl)
+  ];
+  let lastError = new Error("Unable to reach the server.");
+
+  for (const baseUrl of orderedBaseUrls) {
+    let response;
+
+    try {
+      response = await fetch(`${baseUrl}${path}`, {
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers ?? {})
+        },
+        ...options
+      });
+    } catch {
+      lastError = new Error("Unable to reach the server.");
+      continue;
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("text/html")) {
+      lastError = new Error("The app reached a web page instead of the API.");
+      continue;
+    }
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({ message: response.status ? `Request failed (${response.status}).` : "Request failed." }));
+      lastError = new Error(data.message || "Request failed.");
+      if (response.status >= 500) {
+        continue;
+      }
+      throw lastError;
+    }
+
+    preferredApiUrl = baseUrl;
+    return response.json().catch(() => ({}));
   }
 
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({ message: response.status ? `Request failed (${response.status}).` : "Request failed." }));
-    throw new Error(data.message || "Request failed.");
-  }
-
-  return response.json().catch(() => ({}));
+  throw lastError;
 }
 
 function PasswordField({ label, value, onChange, required = false, minLength, autoComplete }) {
