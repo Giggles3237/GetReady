@@ -1374,7 +1374,7 @@ app.get("/api/dashboard/summary", async (req, res) => {
     overdue: vehicles.filter((vehicle) => new Date(vehicle.due_date).getTime() < now && vehicle.status !== STATUS.READY).length,
     ready: vehicles.filter((vehicle) => vehicle.status === STATUS.READY).length,
     needsAction: vehicles.filter((vehicle) => getQueueForRole(vehicle, role, actionDefinitions, req.currentUser.id)).length,
-    byPipeline: ["Submitted", "At Detail", "In Detail", "Service", "QC", "Ready"].map((column) => ({
+    byPipeline: ["Submitted", "At Detail", "In Detail", "Service", "Warehouse QC", "Ready"].map((column) => ({
       column,
       count: vehicles.filter((vehicle) => getPipelineColumn(vehicle) === column).length
     }))

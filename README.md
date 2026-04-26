@@ -97,7 +97,7 @@ npm run migrate:auth
 
 - `Ready / Complete` is blocked until:
   - detail has been finished
-  - the vehicle has been removed from detail
+  - the vehicle has been removed from detail and moved to warehouse for QC
   - required service work is complete when `needs_service` is true
   - required body work is complete when `needs_bodywork` is true
   - final QC is complete only if it has been required for that vehicle

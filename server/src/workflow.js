@@ -14,9 +14,9 @@ export const STATUS_META = {
   [STATUS.TO_DETAIL]: { label: "To Detail", pipeline: "At Detail", nextRole: "detailer" },
   [STATUS.DETAIL_STARTED]: { label: "Detail Started", pipeline: "In Detail", nextRole: "detailer" },
   [STATUS.DETAIL_FINISHED]: { label: "Detail Finished", pipeline: "In Detail", nextRole: "bmw_genius" },
-  [STATUS.REMOVED_FROM_DETAIL]: { label: "Vehicle Removed from Detail", pipeline: "At Detail", nextRole: "service_advisor" },
+  [STATUS.REMOVED_FROM_DETAIL]: { label: "Vehicle Removed from Detail", pipeline: "Warehouse QC", nextRole: "service_advisor" },
   [STATUS.SERVICE]: { label: "Service / Body Work", pipeline: "Service", nextRole: "service_advisor" },
-  [STATUS.QC]: { label: "Final QC", pipeline: "QC", nextRole: "manager" },
+  [STATUS.QC]: { label: "Final QC", pipeline: "Warehouse QC", nextRole: "manager" },
   [STATUS.READY]: { label: "Ready / Complete", pipeline: "Ready", nextRole: null }
 };
 
@@ -86,7 +86,7 @@ export function getPipelineColumn(vehicle) {
     const serviceDone = !vehicle.needs_service || vehicle.service_status === "completed";
     const bodyDone = !vehicle.needs_bodywork || vehicle.bodywork_status === "completed";
     if (serviceDone && bodyDone) {
-      return "QC";
+      return "Warehouse QC";
     }
   }
 

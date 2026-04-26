@@ -57,7 +57,7 @@ const roleOptions = [
   { value: "service_advisor", label: "Service Advisor" }
 ];
 
-const pipelineColumns = ["Submitted", "At Detail", "In Detail", "Service", "QC", "Ready"];
+const pipelineColumns = ["Submitted", "At Detail", "In Detail", "Service", "Warehouse QC", "Ready"];
 const statusProgressOrder = {
   submitted: 1,
   to_detail: 2,
