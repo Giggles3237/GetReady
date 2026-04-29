@@ -1,3 +1,5 @@
+import { getAuditEntryDisplay } from "../../utils/appHelpers";
+
 export default function AdminTab({
   loadAdminData,
   temporaryPassword,
@@ -182,14 +184,17 @@ export default function AdminTab({
 
       {adminSection === "audit" ? (
         <div className="audit-feed">
-          {auditFeed.map((entry) => (
-            <div key={entry.id} className="audit-row">
-              <strong>{fmtDate(entry.created_at)}</strong>
-              <span>{entry.user?.name ?? "Unknown User"}</span>
-              <span>{entry.vehicle?.stock_number ?? "System"}</span>
-              <p>{entry.field_changed.replaceAll("_", " ")}: {String(entry.old_value || "empty")} to {String(entry.new_value || "empty")}</p>
-            </div>
-          ))}
+          {auditFeed.map((entry) => {
+            const display = getAuditEntryDisplay(entry);
+            return (
+              <div key={entry.id} className="audit-row">
+                <strong>{display.title}</strong>
+                <span>{fmtDate(entry.created_at)}</span>
+                <span>{entry.user?.name ?? "Unknown User"} | {entry.vehicle?.stock_number ?? "System"}</span>
+                {display.detail ? <p>{display.detail}</p> : null}
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </section>

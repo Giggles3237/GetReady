@@ -11,6 +11,89 @@ import {
   sanitizeUser
 } from "../vehicle-helpers.js";
 
+const managerCorrectionBooleanFields = new Set([
+  "needs_service",
+  "needs_bodywork",
+  "recall_checked",
+  "recall_open",
+  "recall_completed",
+  "fueled",
+  "qc_required",
+  "qc_completed"
+]);
+
+const managerCorrectionEnumFields = {
+  status: new Set(Object.values(STATUS)),
+  service_status: new Set(["not_needed", "pending", "in_progress", "completed"]),
+  bodywork_status: new Set(["not_needed", "pending", "in_progress", "completed"])
+};
+
+function normalizeManagerCorrections(payload, vehicle) {
+  const normalized = {};
+
+  for (const [field, value] of Object.entries(payload ?? {})) {
+    if (managerCorrectionBooleanFields.has(field) && typeof value === "boolean") {
+      normalized[field] = value;
+      continue;
+    }
+
+    if (managerCorrectionEnumFields[field]?.has(value)) {
+      normalized[field] = value;
+    }
+  }
+
+  if (Object.keys(normalized).length === 0) {
+    throw Object.assign(new Error("No valid correction fields were provided."), { statusCode: 400 });
+  }
+
+  const needsService = normalized.needs_service ?? vehicle.needs_service;
+  const needsBodywork = normalized.needs_bodywork ?? vehicle.needs_bodywork;
+  const qcRequired = normalized.qc_required ?? vehicle.qc_required;
+
+  if (!needsService) {
+    normalized.needs_service = false;
+    normalized.service_status = "not_needed";
+    normalized.service_notes = "";
+  } else if (!normalized.service_status && vehicle.service_status === "not_needed") {
+    normalized.service_status = "pending";
+  }
+
+  if (!needsBodywork) {
+    normalized.needs_bodywork = false;
+    normalized.bodywork_status = "not_needed";
+    normalized.bodywork_notes = "";
+  } else if (!normalized.bodywork_status && vehicle.bodywork_status === "not_needed") {
+    normalized.bodywork_status = "pending";
+  }
+
+  const nextRecall = {
+    recall_checked: normalized.recall_checked ?? vehicle.recall_checked,
+    recall_open: normalized.recall_open ?? vehicle.recall_open,
+    recall_completed: normalized.recall_completed ?? vehicle.recall_completed
+  };
+
+  if (nextRecall.recall_completed) {
+    nextRecall.recall_checked = true;
+    nextRecall.recall_open = true;
+  } else if (nextRecall.recall_open) {
+    nextRecall.recall_checked = true;
+  } else if (!nextRecall.recall_checked) {
+    nextRecall.recall_open = false;
+    nextRecall.recall_completed = false;
+  }
+
+  if (Object.keys(normalized).some((field) => field.startsWith("recall_"))) {
+    Object.assign(normalized, nextRecall);
+  }
+
+  if (!qcRequired) {
+    normalized.qc_required = false;
+    normalized.qc_completed = false;
+  }
+
+  return normalized;
+}
+
 export function registerVehicleRoutes(app, {
   isAdmin,
   hasManagerAccess,
@@ -245,6 +328,24 @@ export function registerVehicleRoutes(app, {
     );
 
     res.json({ vehicle: nextVehicle });
+  });
+
+  app.patch("/api/vehicles/:id/corrections", requireManager, async (req, res) => {
+    const vehicleRow = await getVehicle(req.params.id);
+
+    if (!vehicleRow) {
+      return res.status(404).json({ message: "Vehicle not found." });
+    }
+
+    const vehicle = normalizeVehicle(vehicleRow);
+
+    try {
+      const normalized = normalizeManagerCorrections(req.body, vehicle);
+      const nextVehicle = await updateVehicleWithAudit(vehicle.id, normalized, req.currentUser.id, "manager_correction");
+      res.json({ vehicle: nextVehicle });
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({ message: error.message || "Unable to save corrections." });
+    }
   });
 
   app.patch("/api/vehicles/:id/due-date", async (req, res) => {

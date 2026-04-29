@@ -13,7 +13,7 @@ export const STATUS_META = {
   [STATUS.SUBMITTED]: { label: "Get Ready Submitted", pipeline: "Submitted", nextRole: "bmw_genius" },
   [STATUS.TO_DETAIL]: { label: "To Detail", pipeline: "At Detail", nextRole: "detailer" },
   [STATUS.DETAIL_STARTED]: { label: "Detail Started", pipeline: "In Detail", nextRole: "detailer" },
-  [STATUS.DETAIL_FINISHED]: { label: "Detail Finished", pipeline: "In Detail", nextRole: "bmw_genius" },
+  [STATUS.DETAIL_FINISHED]: { label: "Detail Finished", pipeline: "Detail Complete", nextRole: "bmw_genius" },
   [STATUS.REMOVED_FROM_DETAIL]: { label: "Vehicle Removed from Detail", pipeline: "Warehouse QC", nextRole: "service_advisor" },
   [STATUS.SERVICE]: { label: "Service / Body Work", pipeline: "Service", nextRole: "service_advisor" },
   [STATUS.QC]: { label: "Final QC", pipeline: "Warehouse QC", nextRole: "manager" },

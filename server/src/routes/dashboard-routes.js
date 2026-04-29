@@ -23,7 +23,7 @@ export function registerDashboardRoutes(app, { requireManager }) {
       overdue: vehicles.filter((vehicle) => new Date(vehicle.due_date).getTime() < now && vehicle.status !== "ready").length,
       ready: vehicles.filter((vehicle) => vehicle.status === "ready").length,
       needsAction: vehicles.filter((vehicle) => getQueueForRole(vehicle, role, actionDefinitions, req.currentUser.id)).length,
-      byPipeline: ["Submitted", "At Detail", "In Detail", "Service", "Warehouse QC", "Ready"].map((column) => ({
+      byPipeline: ["Submitted", "At Detail", "In Detail", "Detail Complete", "Service", "Warehouse QC", "Ready"].map((column) => ({
         column,
         count: vehicles.filter((vehicle) => getPipelineColumn(vehicle) === column).length
       }))

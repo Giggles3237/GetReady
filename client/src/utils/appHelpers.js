@@ -178,6 +178,228 @@ export function formatFieldLabel(value) {
   return value.replaceAll("_", " ");
 }
 
+const auditStatusLabels = {
+  submitted: "Get Ready Submitted",
+  to_detail: "Moved to Detail",
+  detail_started: "Detail Started",
+  detail_finished: "Detail Completed",
+  removed_from_detail: "Returned from Detail",
+  service: "Moved to Service",
+  qc: "Sent to Final QC",
+  ready: "Front Line Ready"
+};
+
+const auditRoleLabels = {
+  admin: "Admin",
+  salesperson: "Sales",
+  manager: "Manager",
+  bmw_genius: "BMW Genius",
+  detailer: "Detail",
+  service_advisor: "Service"
+};
+
+function isTruthyAuditValue(value) {
+  return String(value).toLowerCase() === "true";
+}
+
+function titleCaseWords(value) {
+  return String(value ?? "")
+    .replaceAll("_", " ")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatAuditDateTime(value) {
+  if (!value) {
+    return "Unknown";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function formatAuditValue(field, value) {
+  if (value == null || value === "") {
+    return "empty";
+  }
+
+  if (field === "status") {
+    return auditStatusLabels[value] ?? titleCaseWords(value);
+  }
+
+  if (field === "assigned_role") {
+    return auditRoleLabels[value] ?? titleCaseWords(value);
+  }
+
+  if (field === "due_date") {
+    return formatAuditDateTime(value);
+  }
+
+  if (field === "integration_source") {
+    return titleCaseWords(value);
+  }
+
+  if (field === "assigned_user_id") {
+    return value ? "Assigned" : "Unassigned";
+  }
+
+  if (field === "service_status" || field === "bodywork_status") {
+    return titleCaseWords(value);
+  }
+
+  if (value === true || value === false || String(value).toLowerCase() === "true" || String(value).toLowerCase() === "false") {
+    return isTruthyAuditValue(value) ? "Yes" : "No";
+  }
+
+  return String(value);
+}
+
+export function getAuditEntryDisplay(entry) {
+  const field = entry.field_changed;
+  const oldValue = entry.old_value;
+  const newValue = entry.new_value;
+
+  if (field === "status") {
+    return {
+      title: auditStatusLabels[newValue] ?? "Status Updated",
+      detail: auditStatusLabels[oldValue] ? `From ${auditStatusLabels[oldValue]}` : null
+    };
+  }
+
+  if (field === "assigned_role") {
+    return {
+      title: `Assigned to ${auditRoleLabels[newValue] ?? titleCaseWords(newValue)}`,
+      detail: oldValue ? `Previously ${auditRoleLabels[oldValue] ?? titleCaseWords(oldValue)}` : null
+    };
+  }
+
+  if (field === "assigned_user_id") {
+    return {
+      title: newValue ? "Assigned Detail Owner" : "Removed Detail Owner",
+      detail: null
+    };
+  }
+
+  if (field === "fueled") {
+    return {
+      title: isTruthyAuditValue(newValue) ? "Vehicle Fueled" : "Fuel Mark Removed",
+      detail: null
+    };
+  }
+
+  if (field === "recall_checked") {
+    return {
+      title: isTruthyAuditValue(newValue) ? "Recalls Checked" : "Recall Check Removed",
+      detail: null
+    };
+  }
+
+  if (field === "recall_open") {
+    return {
+      title: isTruthyAuditValue(newValue) ? "Open Recall Logged" : "Open Recall Cleared",
+      detail: null
+    };
+  }
+
+  if (field === "recall_completed") {
+    return {
+      title: isTruthyAuditValue(newValue) ? "Recall Completed" : "Recall Completion Removed",
+      detail: null
+    };
+  }
+
+  if (field === "service_status") {
+    const next = {
+      pending: "Service Required",
+      in_progress: "Service Started",
+      completed: "Service Completed",
+      not_needed: "Service Removed"
+    };
+    return {
+      title: next[newValue] ?? "Service Updated",
+      detail: oldValue ? `Previously ${formatAuditValue(field, oldValue)}` : null
+    };
+  }
+
+  if (field === "bodywork_status") {
+    const next = {
+      pending: "Body Work Required",
+      in_progress: "Body Work Started",
+      completed: "Body Work Completed",
+      not_needed: "Body Work Removed"
+    };
+    return {
+      title: next[newValue] ?? "Body Work Updated",
+      detail: oldValue ? `Previously ${formatAuditValue(field, oldValue)}` : null
+    };
+  }
+
+  if (field === "needs_service") {
+    return {
+      title: isTruthyAuditValue(newValue) ? "Service Added to Workflow" : "Service Removed from Workflow",
+      detail: null
+    };
+  }
+
+  if (field === "needs_bodywork") {
+    return {
+      title: isTruthyAuditValue(newValue) ? "Body Work Added to Workflow" : "Body Work Removed from Workflow",
+      detail: null
+    };
+  }
+
+  if (field === "qc_required") {
+    return {
+      title: isTruthyAuditValue(newValue) ? "Final QC Required" : "Final QC Removed",
+      detail: null
+    };
+  }
+
+  if (field === "qc_completed") {
+    return {
+      title: isTruthyAuditValue(newValue) ? "Final QC Completed" : "Final QC Reopened",
+      detail: null
+    };
+  }
+
+  if (field === "due_date") {
+    return {
+      title: "Due Date Updated",
+      detail: `${formatAuditValue(field, oldValue)} to ${formatAuditValue(field, newValue)}`
+    };
+  }
+
+  if (field === "integration_source") {
+    return {
+      title: `Imported from ${formatAuditValue(field, newValue)}`,
+      detail: null
+    };
+  }
+
+  if (field === "is_archived") {
+    return {
+      title: isTruthyAuditValue(newValue) ? "Vehicle Archived" : "Vehicle Restored",
+      detail: null
+    };
+  }
+
+  return {
+    title: titleCaseWords(field),
+    detail: `${formatAuditValue(field, oldValue)} to ${formatAuditValue(field, newValue)}`
+  };
+}
+
 export function performAction(vehicleId, actionKey, updateStatus, updateFlags) {
   if (actionKey === "toggle_fueled") return updateFlags(vehicleId, { fueled: true });
   if (actionKey === "toggle_recall") return updateFlags(vehicleId, { recall_checked: true });

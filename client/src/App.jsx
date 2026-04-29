@@ -98,6 +98,7 @@ export default function App() {
     openVehicle,
     updateStatus,
     updateFlags,
+    saveManagerCorrections,
     updateVehicleDueDate,
     archiveVehicle,
     unarchiveVehicle,
@@ -377,6 +378,7 @@ export default function App() {
         performAction={performAction}
         updateStatus={(vehicleId, status) => updateStatus(vehicleId, status).catch((err) => setError(err.message))}
         updateFlags={(vehicleId, changes) => updateFlags(vehicleId, changes).catch((err) => setError(err.message))}
+        saveManagerCorrections={(vehicleId, changes) => saveManagerCorrections(vehicleId, changes).catch((err) => setError(err.message))}
         completedSteps={completedSteps}
       />
 

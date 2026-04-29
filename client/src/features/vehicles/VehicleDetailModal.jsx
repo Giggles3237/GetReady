@@ -1,3 +1,24 @@
+import { useEffect, useState } from "react";
+import { getAuditEntryDisplay } from "../../utils/appHelpers";
+
+const statusOptions = [
+  "submitted",
+  "to_detail",
+  "detail_started",
+  "detail_finished",
+  "removed_from_detail",
+  "service",
+  "qc",
+  "ready"
+];
+
+const progressOptions = [
+  { value: "not_needed", label: "Not Needed" },
+  { value: "pending", label: "Pending" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "completed", label: "Completed" }
+];
+
 export default function VehicleDetailModal({
   selectedVehicle,
   onClose,
@@ -20,10 +41,79 @@ export default function VehicleDetailModal({
   performAction,
   updateStatus,
   updateFlags,
+  saveManagerCorrections,
   completedSteps
 }) {
+  const [corrections, setCorrections] = useState(null);
+  const [showCorrectionPanel, setShowCorrectionPanel] = useState(false);
+
+  useEffect(() => {
+    if (!selectedVehicle) {
+      setCorrections(null);
+      setShowCorrectionPanel(false);
+      return;
+    }
+
+    setShowCorrectionPanel(false);
+    setCorrections({
+      status: selectedVehicle.status,
+      needs_service: Boolean(selectedVehicle.needs_service),
+      service_status: selectedVehicle.service_status,
+      needs_bodywork: Boolean(selectedVehicle.needs_bodywork),
+      bodywork_status: selectedVehicle.bodywork_status,
+      fueled: Boolean(selectedVehicle.fueled),
+      qc_required: Boolean(selectedVehicle.qc_required),
+      qc_completed: Boolean(selectedVehicle.qc_completed),
+      recall_checked: Boolean(selectedVehicle.recall_checked),
+      recall_open: Boolean(selectedVehicle.recall_open),
+      recall_completed: Boolean(selectedVehicle.recall_completed)
+    });
+  }, [selectedVehicle]);
+
   if (!selectedVehicle) {
     return null;
+  }
+
+  function setCorrection(field, value) {
+    setCorrections((current) => {
+      const next = { ...current, [field]: value };
+
+      if (field === "needs_service" && !value) {
+        next.service_status = "not_needed";
+      } else if (field === "needs_service" && value && next.service_status === "not_needed") {
+        next.service_status = "pending";
+      }
+
+      if (field === "needs_bodywork" && !value) {
+        next.bodywork_status = "not_needed";
+      } else if (field === "needs_bodywork" && value && next.bodywork_status === "not_needed") {
+        next.bodywork_status = "pending";
+      }
+
+      if (field === "qc_required" && !value) {
+        next.qc_completed = false;
+      }
+
+      if (field === "recall_checked" && !value) {
+        next.recall_open = false;
+        next.recall_completed = false;
+      }
+
+      if (field === "recall_open") {
+        if (value) {
+          next.recall_checked = true;
+        } else {
+          next.recall_completed = false;
+        }
+      }
+
+      if (field === "recall_completed" && value) {
+        next.recall_checked = true;
+        next.recall_open = true;
+      }
+
+      return next;
+    });
   }
 
   return (
@@ -88,6 +178,13 @@ export default function VehicleDetailModal({
           ) : null}
           {hasManagerAccess ? (
             <div className="detail-actions-row">
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setShowCorrectionPanel((current) => !current)}
+              >
+                {showCorrectionPanel ? "Hide Adjustments" : "Edit Workflow"}
+              </button>
               {selectedVehicle.is_archived && canAccessAdmin ? (
                 <button type="button" className="primary-btn" onClick={() => unarchiveVehicle(selectedVehicle.id)}>
                   Unarchive Vehicle
@@ -124,6 +221,136 @@ export default function VehicleDetailModal({
           )}
         </div>
 
+        {hasManagerAccess && corrections && showCorrectionPanel ? (
+          <div className="detail-card">
+            <div className="section-heading compact">
+              <div>
+                <h3>Workflow Editor</h3>
+                <p className="step-helper">
+                  Adjust the live workflow fields directly if someone tapped the wrong step.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => saveManagerCorrections(selectedVehicle.id, corrections)}
+              >
+                Save Changes
+              </button>
+            </div>
+
+            <div className="manager-correction-grid">
+              <label>
+                Current Status
+                <select value={corrections.status} onChange={(event) => setCorrection("status", event.target.value)}>
+                  {statusOptions.map((status) => (
+                    <option key={status} value={status}>{formatFieldLabel(status)}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="toggle-line">
+                <input
+                  type="checkbox"
+                  checked={corrections.fueled}
+                  onChange={(event) => setCorrection("fueled", event.target.checked)}
+                />
+                Fueled
+              </label>
+
+              <label className="toggle-line">
+                <input
+                  type="checkbox"
+                  checked={corrections.qc_required}
+                  onChange={(event) => setCorrection("qc_required", event.target.checked)}
+                />
+                QC Required
+              </label>
+
+              <label className="toggle-line">
+                <input
+                  type="checkbox"
+                  checked={corrections.qc_completed}
+                  disabled={!corrections.qc_required}
+                  onChange={(event) => setCorrection("qc_completed", event.target.checked)}
+                />
+                QC Completed
+              </label>
+
+              <label className="toggle-line">
+                <input
+                  type="checkbox"
+                  checked={corrections.needs_service}
+                  onChange={(event) => setCorrection("needs_service", event.target.checked)}
+                />
+                Needs Service
+              </label>
+
+              <label>
+                Service Status
+                <select
+                  value={corrections.service_status}
+                  disabled={!corrections.needs_service}
+                  onChange={(event) => setCorrection("service_status", event.target.value)}
+                >
+                  {progressOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="toggle-line">
+                <input
+                  type="checkbox"
+                  checked={corrections.needs_bodywork}
+                  onChange={(event) => setCorrection("needs_bodywork", event.target.checked)}
+                />
+                Needs Body Work
+              </label>
+
+              <label>
+                Body Work Status
+                <select
+                  value={corrections.bodywork_status}
+                  disabled={!corrections.needs_bodywork}
+                  onChange={(event) => setCorrection("bodywork_status", event.target.value)}
+                >
+                  {progressOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="toggle-line">
+                <input
+                  type="checkbox"
+                  checked={corrections.recall_checked}
+                  onChange={(event) => setCorrection("recall_checked", event.target.checked)}
+                />
+                Recalls Checked
+              </label>
+
+              <label className="toggle-line">
+                <input
+                  type="checkbox"
+                  checked={corrections.recall_open}
+                  onChange={(event) => setCorrection("recall_open", event.target.checked)}
+                />
+                Recall Open
+              </label>
+
+              <label className="toggle-line">
+                <input
+                  type="checkbox"
+                  checked={corrections.recall_completed}
+                  onChange={(event) => setCorrection("recall_completed", event.target.checked)}
+                />
+                Recall Completed
+              </label>
+            </div>
+          </div>
+        ) : null}
+
         <div className="detail-card">
           <h3>Completed Steps</h3>
           {completedSteps.length > 0 ? (
@@ -139,15 +366,18 @@ export default function VehicleDetailModal({
         </div>
 
         <div className="detail-card">
-          <h3>Audit Timeline</h3>
+          <h3>Activity Log</h3>
           <div className="timeline">
-            {selectedVehicle.timeline.map((entry) => (
-              <div key={entry.id} className="timeline-item">
-                <strong>{fmtDate(entry.created_at)}</strong>
-                <span>{entry.user?.name ?? "Unknown User"}</span>
-                <p>{formatFieldLabel(entry.field_changed)}: {String(entry.old_value || "empty")} to {String(entry.new_value || "empty")}</p>
-              </div>
-            ))}
+            {selectedVehicle.timeline.map((entry) => {
+              const display = getAuditEntryDisplay(entry);
+              return (
+                <div key={entry.id} className="timeline-item">
+                  <strong>{display.title}</strong>
+                  <span>{fmtDate(entry.created_at)} | {entry.user?.name ?? "Unknown User"}</span>
+                  {display.detail ? <p>{display.detail}</p> : null}
+                </div>
+              );
+            })}
           </div>
         </div>
       </section>

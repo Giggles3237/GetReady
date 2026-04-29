@@ -216,6 +216,15 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     await refreshVehicleAndDashboard(vehicleId);
   }
 
+  async function saveManagerCorrections(vehicleId, changes) {
+    setError("");
+    await request(`/vehicles/${vehicleId}/corrections`, {
+      method: "PATCH",
+      body: JSON.stringify(changes)
+    });
+    await refreshVehicleAndDashboard(vehicleId);
+  }
+
   async function updateVehicleDueDate(vehicleId) {
     setError("");
     await request(`/vehicles/${vehicleId}/due-date`, {
@@ -328,7 +337,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     [vehicles, showCompleted]
   );
   const grouped = useMemo(() => {
-    const map = Object.fromEntries(["Submitted", "At Detail", "In Detail", "Service", "Warehouse QC", "Ready"].map((column) => [column, []]));
+    const map = Object.fromEntries(["Submitted", "At Detail", "In Detail", "Detail Complete", "Service", "Warehouse QC", "Ready"].map((column) => [column, []]));
     filteredForDisplay.forEach((vehicle) => {
       map[vehicle.pipeline ?? "Submitted"].push(vehicle);
     });
@@ -490,6 +499,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     openVehicle,
     updateStatus,
     updateFlags,
+    saveManagerCorrections,
     updateVehicleDueDate,
     archiveVehicle,
     unarchiveVehicle,

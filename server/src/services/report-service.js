@@ -3,7 +3,7 @@ import { normalizeVehicle } from "../vehicle-helpers.js";
 import { getPipelineColumn, ROLE_LABELS } from "../workflow.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const PIPELINE_ORDER = ["Submitted", "At Detail", "In Detail", "Service", "Warehouse QC", "Ready"];
+const PIPELINE_ORDER = ["Submitted", "At Detail", "In Detail", "Detail Complete", "Service", "Warehouse QC", "Ready"];
 const ROLE_ORDER = ["bmw_genius", "detailer", "service_advisor", "manager"];
 
 function startOfDay(value) {

@@ -9,4 +9,4 @@ export const roleOptions = [
   { value: "service_advisor", label: "Service Advisor" }
 ];
 
-export const pipelineColumns = ["Submitted", "At Detail", "In Detail", "Service", "Warehouse QC", "Ready"];
+export const pipelineColumns = ["Submitted", "At Detail", "In Detail", "Detail Complete", "Service", "Warehouse QC", "Ready"];
