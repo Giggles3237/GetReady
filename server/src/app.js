@@ -1,6 +1,7 @@
 import "dotenv/config";
 import cors from "cors";
 import express from "express";
+import { asyncHandler } from "./async-handler.js";
 import { hasManagerAccess, isAdmin } from "./access.js";
 import { buildAllowedOrigins, normalizeEmail, signAuthToken, verifyAuthToken } from "./auth.js";
 import { registerAdminRoutes } from "./routes/admin-routes.js";
@@ -133,10 +134,10 @@ function requireAdmin(req, res, next) {
 
 app.use(loadSessionUser);
 
-app.get("/api/health", async (_req, res) => {
+app.get("/api/health", asyncHandler(async (_req, res) => {
   await getPool().query("SELECT 1");
   res.json({ ok: true, service: "get-ready-api" });
-});
+}));
 
 registerAuthRoutes(app, {
   requireAuth,
@@ -178,7 +179,15 @@ app.use((err, _req, res, _next) => {
   res.status(err.statusCode || 500).json({ message: err.message || "Unexpected server error." });
 });
 
-app.listen(port, async () => {
-  await getPool().query("SELECT 1");
+app.listen(port, () => {
   console.log(`Get Ready API listening on ${port} with ${authTokenTtlDays}-day auth tokens`);
 });
+
+getPool()
+  .query("SELECT 1")
+  .then(() => {
+    console.log("Initial database connectivity check passed");
+  })
+  .catch((error) => {
+    console.error("Initial database connectivity check failed", error);
+  });

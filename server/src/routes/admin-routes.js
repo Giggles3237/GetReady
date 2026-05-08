@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { v4 as uuid } from "uuid";
+import { asyncHandler } from "../async-handler.js";
 import {
   createUser,
   getPool,
@@ -21,7 +22,7 @@ export function registerAdminRoutes(app, {
   generateTemporaryPassword,
   addAuditEntry
 }) {
-  app.post("/api/admin/users", requireAdmin, async (req, res) => {
+  app.post("/api/admin/users", requireAdmin, asyncHandler(async (req, res) => {
     const { name, email, role } = req.body;
 
     if (!name || !email || !role || !ROLE_LABELS[role]) {
@@ -70,9 +71,9 @@ export function registerAdminRoutes(app, {
       temporaryPassword,
       users: (await listUsers()).map(sanitizeUser)
     });
-  });
+  }));
 
-  app.patch("/api/admin/users/:id", requireAdmin, async (req, res) => {
+  app.patch("/api/admin/users/:id", requireAdmin, asyncHandler(async (req, res) => {
     const { name, email, role, is_active } = req.body;
     const targetUser = await getUser(req.params.id);
 
@@ -146,9 +147,9 @@ export function registerAdminRoutes(app, {
     }
 
     res.json({ user: sanitizeUser(await getUser(req.params.id)), users: (await listUsers()).map(sanitizeUser) });
-  });
+  }));
 
-  app.post("/api/admin/users/:id/reset-password", requireAdmin, async (req, res) => {
+  app.post("/api/admin/users/:id/reset-password", requireAdmin, asyncHandler(async (req, res) => {
     const targetUser = await getUser(req.params.id);
 
     if (!targetUser) {
@@ -182,14 +183,14 @@ export function registerAdminRoutes(app, {
     }
 
     res.json({ temporaryPassword });
-  });
+  }));
 
-  app.get("/api/admin/actions", requireAdmin, async (_req, res) => {
+  app.get("/api/admin/actions", requireAdmin, asyncHandler(async (_req, res) => {
     const actions = (await listActionDefinitions()).map(normalizeActionDefinition);
     res.json({ actions });
-  });
+  }));
 
-  app.patch("/api/admin/actions/:key", requireAdmin, async (req, res) => {
+  app.patch("/api/admin/actions/:key", requireAdmin, asyncHandler(async (req, res) => {
     const { label, role, enabled } = req.body;
     const actions = (await listActionDefinitions()).map(normalizeActionDefinition);
     const action = actions.find((item) => item.key === req.params.key);
@@ -248,9 +249,9 @@ export function registerAdminRoutes(app, {
     }
 
     res.json({ actions: (await listActionDefinitions()).map(normalizeActionDefinition) });
-  });
+  }));
 
-  app.get("/api/admin/audit", requireAdmin, async (req, res) => {
+  app.get("/api/admin/audit", requireAdmin, asyncHandler(async (req, res) => {
     const { vehicleId, limit = 100 } = req.query;
     const [users, vehicles, entries] = await Promise.all([
       listUsers(),
@@ -264,5 +265,5 @@ export function registerAdminRoutes(app, {
     res.json({
       audit: entries.map((entry) => decorateAuditEntry(entry, usersById, vehiclesById))
     });
-  });
+  }));
 }

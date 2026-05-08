@@ -1,3 +1,4 @@
+import { asyncHandler } from "../async-handler.js";
 import { getVehicle, listActionDefinitions, listAuditEntries, listUsers, listVehicles } from "../db.js";
 import { STATUS, STATUS_META, canTransition, deriveAssignedRole, getPipelineColumn } from "../workflow.js";
 import { shouldShowOnDashboard } from "../services/dashboard-visibility.js";
@@ -104,12 +105,12 @@ export function registerVehicleRoutes(app, {
   isStatusUndo,
   getProtectedUndoField
 }) {
-  app.get("/api/users", async (_req, res) => {
+  app.get("/api/users", asyncHandler(async (_req, res) => {
     const users = (await listUsers()).map(sanitizeUser);
     res.json({ users });
-  });
+  }));
 
-  app.get("/api/vehicles", async (req, res) => {
+  app.get("/api/vehicles", asyncHandler(async (req, res) => {
     const { search, view = "mine", include_archived = "false", include_completed = "false" } = req.query;
     const requestedRole = typeof req.query.role === "string" && req.query.role !== "all" ? req.query.role : req.currentUser.role;
     const role = requestedRole === "admin" ? "manager" : requestedRole;
@@ -184,9 +185,9 @@ export function registerVehicleRoutes(app, {
     }
 
     res.json({ vehicles: filtered });
-  });
+  }));
 
-  app.get("/api/search/vehicles", async (req, res) => {
+  app.get("/api/search/vehicles", asyncHandler(async (req, res) => {
     const normalizedSearch = String(req.query.q ?? "").trim().toLowerCase();
 
     if (!normalizedSearch) {
@@ -210,9 +211,9 @@ export function registerVehicleRoutes(app, {
       .slice(0, 12);
 
     res.json({ vehicles: matches });
-  });
+  }));
 
-  app.get("/api/vehicles/:id", async (req, res) => {
+  app.get("/api/vehicles/:id", asyncHandler(async (req, res) => {
     const [vehicleRow, users, actionDefinitionsRaw, auditEntries] = await Promise.all([
       getVehicle(req.params.id),
       listUsers(),
@@ -231,9 +232,9 @@ export function registerVehicleRoutes(app, {
     const timeline = auditEntries.map((entry) => decorateAuditEntry(entry, usersById, vehiclesById));
 
     res.json({ vehicle: decorateVehicle(vehicle, usersById, timeline, actionDefinitions, req.currentUser.id) });
-  });
+  }));
 
-  app.patch("/api/vehicles/:id/archive", requireManager, async (req, res) => {
+  app.patch("/api/vehicles/:id/archive", requireManager, asyncHandler(async (req, res) => {
     const vehicleRow = await getVehicle(req.params.id);
 
     if (!vehicleRow) {
@@ -256,9 +257,9 @@ export function registerVehicleRoutes(app, {
     );
 
     res.json({ vehicle: nextVehicle });
-  });
+  }));
 
-  app.patch("/api/vehicles/:id/unarchive", requireAdmin, async (req, res) => {
+  app.patch("/api/vehicles/:id/unarchive", requireAdmin, asyncHandler(async (req, res) => {
     const vehicleRow = await getVehicle(req.params.id);
 
     if (!vehicleRow) {
@@ -281,19 +282,19 @@ export function registerVehicleRoutes(app, {
     );
 
     res.json({ vehicle: nextVehicle });
-  });
+  }));
 
-  app.post("/api/vehicles", async (req, res) => {
+  app.post("/api/vehicles", asyncHandler(async (req, res) => {
     const result = await createVehicleRecord({
       actorUser: req.currentUser,
       payload: req.body,
       allowAlternateSubmitter: hasManagerAccess(req.currentUser)
     });
 
-    res.status(201).json({ vehicle: result.vehicle });
-  });
+    res.status(result.created ? 201 : 200).json({ vehicle: result.vehicle, warning: result.warning, created: result.created });
+  }));
 
-  app.patch("/api/vehicles/:id/status", async (req, res) => {
+  app.patch("/api/vehicles/:id/status", asyncHandler(async (req, res) => {
     const { status } = req.body;
     const vehicleRow = await getVehicle(req.params.id);
 
@@ -328,9 +329,9 @@ export function registerVehicleRoutes(app, {
     );
 
     res.json({ vehicle: nextVehicle });
-  });
+  }));
 
-  app.patch("/api/vehicles/:id/corrections", requireManager, async (req, res) => {
+  app.patch("/api/vehicles/:id/corrections", requireManager, asyncHandler(async (req, res) => {
     const vehicleRow = await getVehicle(req.params.id);
 
     if (!vehicleRow) {
@@ -346,9 +347,9 @@ export function registerVehicleRoutes(app, {
     } catch (error) {
       return res.status(error.statusCode || 400).json({ message: error.message || "Unable to save corrections." });
     }
-  });
+  }));
 
-  app.patch("/api/vehicles/:id/due-date", async (req, res) => {
+  app.patch("/api/vehicles/:id/due-date", asyncHandler(async (req, res) => {
     const { due_date } = req.body;
     const vehicleRow = await getVehicle(req.params.id);
 
@@ -376,9 +377,9 @@ export function registerVehicleRoutes(app, {
     );
 
     res.json({ vehicle: nextVehicle });
-  });
+  }));
 
-  app.patch("/api/vehicles/:id/flags", async (req, res) => {
+  app.patch("/api/vehicles/:id/flags", asyncHandler(async (req, res) => {
     const vehicleRow = await getVehicle(req.params.id);
 
     if (!vehicleRow) {
@@ -428,5 +429,5 @@ export function registerVehicleRoutes(app, {
 
     const nextVehicle = await updateVehicleWithAudit(vehicle.id, normalized, req.currentUser.id, "flag_update");
     res.json({ vehicle: nextVehicle });
-  });
+  }));
 }

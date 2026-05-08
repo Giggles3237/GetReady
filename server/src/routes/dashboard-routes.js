@@ -1,3 +1,4 @@
+import { asyncHandler } from "../async-handler.js";
 import { listActionDefinitions, listVehicles } from "../db.js";
 import { shouldShowOnDashboard } from "../services/dashboard-visibility.js";
 import { buildOverviewReport } from "../services/report-service.js";
@@ -5,7 +6,7 @@ import { formatStatus, getPipelineColumn } from "../workflow.js";
 import { getQueueForRole, normalizeActionDefinition, normalizeVehicle } from "../vehicle-helpers.js";
 
 export function registerDashboardRoutes(app, { requireManager }) {
-  app.get("/api/dashboard/summary", async (req, res) => {
+  app.get("/api/dashboard/summary", asyncHandler(async (req, res) => {
     const requestedRole = typeof req.query.role === "string" && req.query.role !== "all" ? req.query.role : req.currentUser.role;
     const role = requestedRole === "admin" ? "manager" : requestedRole;
     const includeCompleted = req.query.include_completed === "true";
@@ -30,9 +31,9 @@ export function registerDashboardRoutes(app, { requireManager }) {
     };
 
     res.json({ summary });
-  });
+  }));
 
-  app.get("/api/dashboard/calendar", async (_req, res) => {
+  app.get("/api/dashboard/calendar", asyncHandler(async (_req, res) => {
     const items = (await listVehicles())
       .map(normalizeVehicle)
       .filter((vehicle) => shouldShowOnDashboard(vehicle))
@@ -46,10 +47,10 @@ export function registerDashboardRoutes(app, { requireManager }) {
       }));
 
     res.json({ items });
-  });
+  }));
 
-  app.get("/api/reports/overview", requireManager, async (_req, res) => {
+  app.get("/api/reports/overview", requireManager, asyncHandler(async (_req, res) => {
     const report = await buildOverviewReport();
     res.json({ report });
-  });
+  }));
 }

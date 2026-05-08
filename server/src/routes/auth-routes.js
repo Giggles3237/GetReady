@@ -1,9 +1,10 @@
 import bcrypt from "bcryptjs";
+import { asyncHandler } from "../async-handler.js";
 import { getUser, getUserByEmail, getPool, updateUserPassword } from "../db.js";
 import { sanitizeUser } from "../vehicle-helpers.js";
 
 export function registerAuthRoutes(app, { requireAuth, normalizeEmail, signAuthToken, jwtSecret, authTokenMaxAgeMs, addAuditEntry }) {
-  app.post("/api/auth/login", async (req, res) => {
+  app.post("/api/auth/login", asyncHandler(async (req, res) => {
     const email = normalizeEmail(req.body?.email);
 
     if (!email) {
@@ -19,7 +20,7 @@ export function registerAuthRoutes(app, { requireAuth, normalizeEmail, signAuthT
       token: signAuthToken(user, jwtSecret, authTokenMaxAgeMs),
       user: sanitizeUser(user)
     });
-  });
+  }));
 
   app.post("/api/auth/logout", (_req, res) => {
     res.json({ ok: true });
@@ -29,7 +30,7 @@ export function registerAuthRoutes(app, { requireAuth, normalizeEmail, signAuthT
     res.json({ user: req.currentUser });
   });
 
-  app.patch("/api/auth/change-password", requireAuth, async (req, res) => {
+  app.patch("/api/auth/change-password", requireAuth, asyncHandler(async (req, res) => {
     const { currentPassword, newPassword } = req.body;
 
     if (!currentPassword || !newPassword || String(newPassword).length < 8) {
@@ -69,5 +70,5 @@ export function registerAuthRoutes(app, { requireAuth, normalizeEmail, signAuthT
     }
 
     res.json({ user: sanitizeUser(await getUser(req.currentUser.id)) });
-  });
+  }));
 }
