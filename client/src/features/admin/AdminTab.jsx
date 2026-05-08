@@ -1,4 +1,4 @@
-import { getAuditEntryDisplay } from "../../utils/appHelpers";
+import { formatStockNumber, getAuditEntryDisplay } from "../../utils/appHelpers";
 
 export default function AdminTab({
   loadAdminData,
@@ -169,7 +169,7 @@ export default function AdminTab({
             <div key={vehicle.id} className="admin-card inactive-user">
               <div className="admin-card-head">
                 <div>
-                  <strong>{vehicle.stock_number} | {vehicle.year} {vehicle.make} {vehicle.model}</strong>
+                  <strong>{formatStockNumber(vehicle.stock_number)} | {vehicle.year} {vehicle.make} {vehicle.model}</strong>
                   <p className="admin-meta">{vehicle.current_location} | Archived</p>
                 </div>
                 <div className="admin-inline-actions">
@@ -190,7 +190,7 @@ export default function AdminTab({
               <div key={entry.id} className="audit-row">
                 <strong>{display.title}</strong>
                 <span>{fmtDate(entry.created_at)}</span>
-                <span>{entry.user?.name ?? "Unknown User"} | {entry.vehicle?.stock_number ?? "System"}</span>
+                <span>{entry.user?.name ?? "Unknown User"} | {entry.vehicle ? formatStockNumber(entry.vehicle.stock_number) : "System"}</span>
                 {display.detail ? <p>{display.detail}</p> : null}
               </div>
             );

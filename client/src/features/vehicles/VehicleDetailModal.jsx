@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getAuditEntryDisplay } from "../../utils/appHelpers";
+import { formatStockNumber, getAuditEntryDisplay } from "../../utils/appHelpers";
 
 const statusOptions = [
   "submitted",
@@ -122,7 +122,7 @@ export default function VehicleDetailModal({
         <div className="section-heading">
           <div>
             <p className="eyebrow">Vehicle Detail</p>
-            <h2>{selectedVehicle.stock_number} | {selectedVehicle.year} {selectedVehicle.make} {selectedVehicle.model}</h2>
+            <h2>{formatStockNumber(selectedVehicle.stock_number)} | {selectedVehicle.year} {selectedVehicle.make} {selectedVehicle.model}</h2>
           </div>
           <button type="button" className="secondary-btn" onClick={onClose}>Close</button>
         </div>

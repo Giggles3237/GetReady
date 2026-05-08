@@ -1,3 +1,5 @@
+import { formatStockNumber } from "../../utils/appHelpers";
+
 export default function CalendarTab({
   calendarVehicles,
   calendarView,
@@ -42,7 +44,7 @@ export default function CalendarTab({
                 {section.items.map((vehicle) => (
                   <button type="button" key={`agenda-${vehicle.id}`} className={`calendar-entry ${getCalendarStatusTone(vehicle)}`} onClick={() => openVehicle(vehicle.id)}>
                     <div>
-                      <strong>{vehicle.stock_number} | {vehicle.year} {vehicle.make} {vehicle.model}</strong>
+                      <strong>{formatStockNumber(vehicle.stock_number)} | {vehicle.year} {vehicle.make} {vehicle.model}</strong>
                       <p>{vehicle.current_location} | {formatFieldLabel(vehicle.status)}</p>
                     </div>
                     <div className="calendar-entry-meta">
@@ -66,7 +68,7 @@ export default function CalendarTab({
               <div className="calendar-entry-list">
                 {day.items.length > 0 ? day.items.map((vehicle) => (
                   <button type="button" key={`week-${vehicle.id}`} className={`calendar-entry ${getCalendarStatusTone(vehicle)}`} onClick={() => openVehicle(vehicle.id)}>
-                    <strong>{vehicle.stock_number}</strong>
+                    <strong>{formatStockNumber(vehicle.stock_number)}</strong>
                     <p>{vehicle.make} {vehicle.model}</p>
                     <span>{fmtDate(vehicle.due_date)}</span>
                   </button>

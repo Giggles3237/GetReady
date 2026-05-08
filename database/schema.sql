@@ -23,7 +23,7 @@ CREATE TABLE action_definitions (
 
 CREATE TABLE vehicles (
   id VARCHAR(36) PRIMARY KEY,
-  stock_number VARCHAR(30) NOT NULL UNIQUE,
+  stock_number VARCHAR(30) NOT NULL,
   year INT NOT NULL,
   make VARCHAR(50) NOT NULL,
   model VARCHAR(50) NOT NULL,

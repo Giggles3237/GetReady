@@ -3,6 +3,7 @@ import { request } from "../lib/api";
 import {
   addDays,
   fmtDayLabel,
+  formatStockNumber,
   getCompletedStepEntries,
   getCompletionEntry,
   getCompletionIndicators,
@@ -66,7 +67,10 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
 
   const hasManagerAccess = ["admin", "manager"].includes(role);
   const canEditDueDate = ["admin", "manager", "salesperson"].includes(role);
-  const salespersonUsers = useMemo(() => users.filter((user) => user.role === "salesperson"), [users]);
+  const salespersonUsers = useMemo(
+    () => users.filter((user) => user.role === "salesperson" && user.is_active),
+    [users]
+  );
   const assignableUsers = useMemo(() => users.filter((user) => user.is_active), [users]);
   const visibleManagedUsers = useMemo(
     () => showInactiveUsers ? users : users.filter((user) => user.is_active),
@@ -153,6 +157,28 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
       submitted_by_user_id: current.submitted_by_user_id || authUser.id
     }));
   }, [authUser]);
+
+  useEffect(() => {
+    if (!authUser || salespersonUsers.length === 0) {
+      return;
+    }
+
+    setSubmission((current) => {
+      const currentSelectionIsActive = salespersonUsers.some((user) => user.id === current.submitted_by_user_id);
+      if (currentSelectionIsActive) {
+        return current;
+      }
+
+      const defaultSalespersonId = salespersonUsers.some((user) => user.id === authUser.id)
+        ? authUser.id
+        : salespersonUsers[0].id;
+
+      return {
+        ...current,
+        submitted_by_user_id: defaultSalespersonId
+      };
+    });
+  }, [authUser, salespersonUsers]);
 
   useEffect(() => {
     if (!authUser) {
@@ -285,7 +311,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     });
 
     setSubmission(createEmptySubmission(authUser.id));
-    setSuccessMessage(`${data.vehicle.stock_number} submitted successfully. Next up: BMW Genius takes the car to detail.`);
+    setSuccessMessage(`${formatStockNumber(data.vehicle.stock_number)} submitted successfully. Next up: BMW Genius takes the car to detail.`);
     setShowSubmissionModal(false);
     await loadDashboard();
     await openVehicle(data.vehicle.id);

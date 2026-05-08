@@ -1,5 +1,5 @@
 import { v4 as uuid } from "uuid";
-import { getPool, getVehicle, getVehicleByStockNumber, insertVehicle, listUsers, replaceVehicle } from "../db.js";
+import { getPool, getVehicle, insertVehicle, listUsers, replaceVehicle } from "../db.js";
 import { STATUS, deriveAssignedRole, syncWorkflowState } from "../workflow.js";
 import { inferLocation, normalizeVehicle } from "../vehicle-helpers.js";
 
@@ -110,21 +110,6 @@ function buildIntegrationNotes(payload, instructions, integrationSource) {
   return mergedNotes.join("\n");
 }
 
-function mergeText(existingValue, nextValue) {
-  const existing = String(existingValue ?? "").trim();
-  const next = String(nextValue ?? "").trim();
-
-  if (!next) {
-    return existing;
-  }
-
-  if (!existing || existing === next || existing.includes(next)) {
-    return existing || next;
-  }
-
-  return `${existing}\n\n${next}`;
-}
-
 function buildVehicleDraft({
   payload,
   stockNumber,
@@ -166,102 +151,6 @@ function buildVehicleDraft({
     assigned_role: "bmw_genius",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
-  };
-}
-
-function buildResubmissionChanges(existingVehicle, draftVehicle, { hasAssignedUserOverride }) {
-  const shouldRestartWorkflow = existingVehicle.is_archived || existingVehicle.status === STATUS.READY;
-
-  if (shouldRestartWorkflow) {
-    return {
-      year: draftVehicle.year,
-      make: draftVehicle.make,
-      model: draftVehicle.model,
-      color: draftVehicle.color,
-      due_date: draftVehicle.due_date,
-      current_location: draftVehicle.current_location,
-      assigned_role: draftVehicle.assigned_role,
-      assigned_user_id: hasAssignedUserOverride ? draftVehicle.assigned_user_id : null,
-      submitted_by_user_id: draftVehicle.submitted_by_user_id,
-      needs_service: draftVehicle.needs_service,
-      needs_bodywork: draftVehicle.needs_bodywork,
-      recall_checked: false,
-      recall_open: false,
-      recall_completed: false,
-      fueled: false,
-      qc_required: draftVehicle.qc_required,
-      qc_completed: false,
-      service_status: draftVehicle.service_status,
-      bodywork_status: draftVehicle.bodywork_status,
-      service_notes: draftVehicle.service_notes,
-      bodywork_notes: draftVehicle.bodywork_notes,
-      notes: mergeText(existingVehicle.notes, draftVehicle.notes),
-      status: STATUS.SUBMITTED,
-      is_archived: false,
-      archived_at: null
-    };
-  }
-
-  const needsService = existingVehicle.needs_service || draftVehicle.needs_service;
-  const needsBodywork = existingVehicle.needs_bodywork || draftVehicle.needs_bodywork;
-  const qcRequired = existingVehicle.qc_required || draftVehicle.qc_required;
-
-  return {
-    year: draftVehicle.year,
-    make: draftVehicle.make,
-    model: draftVehicle.model,
-    color: draftVehicle.color,
-    due_date: draftVehicle.due_date,
-    assigned_user_id: hasAssignedUserOverride ? draftVehicle.assigned_user_id : existingVehicle.assigned_user_id,
-    submitted_by_user_id: draftVehicle.submitted_by_user_id,
-    needs_service: needsService,
-    needs_bodywork: needsBodywork,
-    qc_required: qcRequired,
-    service_status: needsService
-      ? (existingVehicle.service_status === "not_needed" ? "pending" : existingVehicle.service_status)
-      : "not_needed",
-    bodywork_status: needsBodywork
-      ? (existingVehicle.bodywork_status === "not_needed" ? "pending" : existingVehicle.bodywork_status)
-      : "not_needed",
-    service_notes: needsService ? mergeText(existingVehicle.service_notes, draftVehicle.service_notes) : "",
-    bodywork_notes: needsBodywork ? mergeText(existingVehicle.bodywork_notes, draftVehicle.bodywork_notes) : "",
-    notes: mergeText(existingVehicle.notes, draftVehicle.notes)
-  };
-}
-
-async function resubmitExistingVehicle({
-  stockNumber,
-  vehicleDraft,
-  hasAssignedUserOverride,
-  actorUser,
-  submittedByUser,
-  submittedByResolution,
-  resubmissionActionType,
-  resubmissionStatusLabel,
-  addAuditEntry
-}) {
-  const existingRow = await getVehicleByStockNumber(stockNumber);
-  const existingVehicle = existingRow ? normalizeVehicle(existingRow) : null;
-
-  if (!existingVehicle) {
-    return null;
-  }
-
-  const nextVehicle = await updateVehicleWithAudit(
-    existingVehicle.id,
-    buildResubmissionChanges(existingVehicle, vehicleDraft, { hasAssignedUserOverride }),
-    actorUser?.id ?? submittedByUser.id,
-    resubmissionActionType,
-    addAuditEntry,
-    [{ fieldChanged: "resubmitted", oldValue: "", newValue: resubmissionStatusLabel }]
-  );
-
-  return {
-    created: false,
-    vehicle: nextVehicle,
-    warning: submittedByResolution.matched
-      ? null
-      : `Salesperson match not found. Assigned to fallback user ${submittedByUser.name}.`
   };
 }
 
@@ -308,9 +197,7 @@ export async function createVehicleRecord({
   payload,
   allowAlternateSubmitter = false,
   actionType = "vehicle_created",
-  resubmissionActionType = "vehicle_resubmitted",
   statusLabel = "Get Ready Submitted",
-  resubmissionStatusLabel = "Get Ready Resubmitted",
   integrationSource = actorUser ? "get-ready-app" : "bopchipboard",
   enrichNotes = false,
   addAuditEntry
@@ -329,7 +216,6 @@ export async function createVehicleRecord({
   const needsService = payload.needs_service == null ? derivedFlags.needsService : toBoolean(payload.needs_service);
   const needsBodywork = payload.needs_bodywork == null ? derivedFlags.needsBodywork : toBoolean(payload.needs_bodywork);
   const resolvedSource = payload.integration_source ?? payload.integrationSource ?? integrationSource;
-  const hasAssignedUserOverride = allowAlternateSubmitter && payload.assigned_user_id != null;
 
   if (!stockNumber || !payload.year || !payload.make || !payload.model || !dueDate) {
     throw Object.assign(new Error("Missing required vehicle fields."), { statusCode: 400 });
@@ -385,21 +271,6 @@ export async function createVehicleRecord({
     notes
   });
 
-  const existingVehicleResult = await resubmitExistingVehicle({
-    stockNumber,
-    vehicleDraft,
-    hasAssignedUserOverride,
-    actorUser,
-    submittedByUser,
-    submittedByResolution,
-    resubmissionActionType,
-    resubmissionStatusLabel,
-    addAuditEntry
-  });
-  if (existingVehicleResult) {
-    return existingVehicleResult;
-  }
-
   const pool = getPool();
   const connection = await pool.getConnection();
 
@@ -425,31 +296,12 @@ export async function createVehicleRecord({
     await connection.commit();
   } catch (error) {
     await connection.rollback();
-
-    if (error?.code === "ER_DUP_ENTRY") {
-      const duplicateResult = await resubmitExistingVehicle({
-        stockNumber,
-        vehicleDraft,
-        hasAssignedUserOverride,
-        actorUser,
-        submittedByUser,
-        submittedByResolution,
-        resubmissionActionType,
-        resubmissionStatusLabel,
-        addAuditEntry
-      });
-      if (duplicateResult) {
-        return duplicateResult;
-      }
-    }
-
     throw error;
   } finally {
     connection.release();
   }
 
   return {
-    created: true,
     vehicle: vehicleDraft,
     warning: submittedByResolution.matched
       ? null

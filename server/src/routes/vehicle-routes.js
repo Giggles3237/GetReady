@@ -291,7 +291,7 @@ export function registerVehicleRoutes(app, {
       allowAlternateSubmitter: hasManagerAccess(req.currentUser)
     });
 
-    res.status(result.created ? 201 : 200).json({ vehicle: result.vehicle, warning: result.warning, created: result.created });
+    res.status(201).json({ vehicle: result.vehicle, warning: result.warning });
   }));
 
   app.patch("/api/vehicles/:id/status", asyncHandler(async (req, res) => {

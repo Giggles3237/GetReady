@@ -20,6 +20,7 @@ import {
   getNextActionForRole,
   getSearchResultState,
   getServiceDisplayLabel,
+  formatStockNumber,
   getVehicleTimeLabel,
   getVehicleTimeTone,
   getWorkflowBadges,
@@ -240,7 +241,7 @@ export default function App() {
                         openVehicle(vehicle.id).catch((err) => setError(err.message));
                       }}
                     >
-                      <strong>{vehicle.stock_number}</strong>
+                      <strong>{formatStockNumber(vehicle.stock_number)}</strong>
                       <span>{vehicle.year} {vehicle.make} {vehicle.model} | {vehicle.color || "No color"}</span>
                       <small>
                         <b>{getSearchResultState(vehicle)}</b> | {formatFieldLabel(vehicle.status)} | Due {fmtDate(vehicle.due_date)}

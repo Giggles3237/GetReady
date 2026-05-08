@@ -149,15 +149,6 @@ export async function getVehicle(id, connection = null) {
   return rows[0] ?? null;
 }
 
-export async function getVehicleByStockNumber(stockNumber, connection = null) {
-  const rows = await runQuery(
-    `SELECT ${vehicleColumns} FROM vehicles WHERE LOWER(stock_number) = LOWER(?) LIMIT 1`,
-    [String(stockNumber).trim()],
-    connection
-  );
-  return rows[0] ?? null;
-}
-
 export async function insertVehicle(connection, vehicle) {
   await runQuery(
     `INSERT INTO vehicles (

@@ -18,6 +18,15 @@ export function fmtDate(value) {
   });
 }
 
+export function formatStockNumber(value) {
+  const normalized = String(value ?? "");
+  if (normalized.length <= 2) {
+    return normalized.toUpperCase();
+  }
+
+  return `${normalized.slice(0, 2).toUpperCase()}${normalized.slice(2)}`;
+}
+
 export function toDateTimeLocalValue(value) {
   if (!value) {
     return "";

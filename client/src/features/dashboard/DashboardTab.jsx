@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Flag from "../../components/ui/Flag";
+import { formatStockNumber } from "../../utils/appHelpers";
 
 export default function DashboardTab({
   roleOptions,
@@ -180,7 +181,7 @@ export default function DashboardTab({
                 <div className="kanban-stack">
                   {(grouped[column] ?? []).map((vehicle) => (
                     <button type="button" key={vehicle.id} className="kanban-card" onClick={() => openVehicle(vehicle.id)}>
-                      <strong>{vehicle.stock_number}</strong>
+                      <strong>{formatStockNumber(vehicle.stock_number)}</strong>
                       <span>{vehicle.make} {vehicle.model}</span>
                     </button>
                   ))}
@@ -217,7 +218,7 @@ function DashboardListRow({
     <div className={`dashboard-row ${overdue ? "overdue" : ""} ${submittedView ? "" : "actionable"} ${emphasized ? "emphasized" : ""} ${isExpanded ? "expanded" : ""}`}>
       <button type="button" className="dashboard-row-summary" onClick={onToggle}>
         <div className="dashboard-row-main">
-          <strong className="stock">{vehicle.stock_number}</strong>
+          <strong className="stock">{formatStockNumber(vehicle.stock_number)}</strong>
           <div className="dashboard-row-copy">
             <span className="dashboard-row-title">{vehicle.year} {vehicle.make} {vehicle.model}</span>
             <span className="dashboard-row-subtitle">{formatCompactStatus(vehicle.status)} | {vehicle.current_location}</span>
