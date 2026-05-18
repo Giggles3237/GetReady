@@ -1,6 +1,5 @@
 import { useState } from "react";
 import AuthScreen from "./components/auth/AuthScreen";
-import PasswordChangeScreen from "./components/auth/PasswordChangeScreen";
 import NoticeModal from "./components/ui/NoticeModal";
 import MobileTabBar from "./components/layout/MobileTabBar";
 import { pipelineColumns, roleOptions } from "./constants";
@@ -37,11 +36,8 @@ export default function App() {
     authUser,
     loginForm,
     setLoginForm,
-    passwordForm,
-    setPasswordForm,
     error: sessionError,
     handleLogin,
-    handlePasswordChange,
     handleLogout
   } = useSession();
 
@@ -83,7 +79,6 @@ export default function App() {
     auditFeed,
     archivedVehicles,
     reportsOverview,
-    temporaryPassword,
     newUser,
     setNewUser,
     submission,
@@ -109,7 +104,6 @@ export default function App() {
     updateAdminAction,
     createAdminUser,
     updateAdminUser,
-    resetAdminPassword,
     grouped,
     overdueActionVehicles,
     mySubmittedVehicles,
@@ -133,18 +127,6 @@ export default function App() {
 
   if (!authUser) {
     return <AuthScreen loginForm={loginForm} setLoginForm={setLoginForm} onSubmit={handleLogin} error={error} />;
-  }
-
-  if (authUser.must_change_password) {
-    return (
-      <PasswordChangeScreen
-        passwordForm={passwordForm}
-        setPasswordForm={setPasswordForm}
-        onSubmit={handlePasswordChange}
-        error={error}
-        user={authUser}
-      />
-    );
   }
 
   return (
@@ -266,7 +248,6 @@ export default function App() {
             setShowCompleted={setShowCompleted}
             error={error}
             successMessage={successMessage}
-            temporaryPassword={temporaryPassword}
             overdueActionVehicles={overdueActionVehicles}
             actionSections={actionSections}
             showSalespersonSubmissionSection={showSalespersonSubmissionSection}
@@ -304,7 +285,6 @@ export default function App() {
         ) : (
           <AdminTab
             loadAdminData={() => loadAdminData().catch((err) => setError(err.message))}
-            temporaryPassword={temporaryPassword}
             adminSection={adminSection}
             setAdminSection={setAdminSection}
             adminActions={adminActions}
@@ -321,7 +301,6 @@ export default function App() {
             setExpandedUserId={setExpandedUserId}
             setUsers={setUsers}
             updateAdminUser={(targetUserId, changes) => updateAdminUser(targetUserId, changes).catch((err) => setError(err.message))}
-            resetAdminPassword={(targetUserId, email) => resetAdminPassword(targetUserId, email).catch((err) => setError(err.message))}
             fmtDate={fmtDate}
             archivedVehicles={archivedVehicles}
             openVehicle={(vehicleId) => openVehicle(vehicleId).catch((err) => setError(err.message))}

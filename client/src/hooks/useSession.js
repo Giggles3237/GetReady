@@ -7,7 +7,6 @@ export function useSession() {
   const [authReady, setAuthReady] = useState(false);
   const [authUser, setAuthUser] = useState(initialAuth.user);
   const [loginForm, setLoginForm] = useState({ email: "" });
-  const [passwordForm, setPasswordForm] = useState({ currentPassword: "", newPassword: "" });
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -52,21 +51,6 @@ export function useSession() {
     }
   }
 
-  async function handlePasswordChange(event) {
-    event.preventDefault();
-
-    try {
-      setError("");
-      const data = await request("/auth/change-password", {
-        method: "PATCH",
-        body: JSON.stringify(passwordForm)
-      });
-      setAuthUser(data.user);
-      setPasswordForm({ currentPassword: "", newPassword: "" });
-    } catch (err) {
-      setError(err.message);
-    }
-  }
 
   async function handleLogout(resetAppState) {
     try {
@@ -86,11 +70,8 @@ export function useSession() {
     authUser,
     loginForm,
     setLoginForm,
-    passwordForm,
-    setPasswordForm,
     error,
     handleLogin,
-    handlePasswordChange,
     handleLogout
   };
 }

@@ -13,7 +13,6 @@ export default function DashboardTab({
   setShowCompleted,
   error,
   successMessage,
-  temporaryPassword,
   overdueActionVehicles,
   actionSections,
   showSalespersonSubmissionSection,
@@ -66,8 +65,6 @@ export default function DashboardTab({
 
         {error ? <div className="error-banner">{error}</div> : null}
         {successMessage ? <div className="success-banner">{successMessage}</div> : null}
-        {temporaryPassword ? <div className="temp-password-banner">{temporaryPassword}</div> : null}
-
         {overdueActionVehicles.length > 0 ? (
           <div className="action-section overdue-section">
             <div className="action-section-head">

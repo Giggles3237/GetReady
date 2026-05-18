@@ -2,7 +2,6 @@ import { formatStockNumber, getAuditEntryDisplay } from "../../utils/appHelpers"
 
 export default function AdminTab({
   loadAdminData,
-  temporaryPassword,
   adminSection,
   setAdminSection,
   adminActions,
@@ -19,7 +18,6 @@ export default function AdminTab({
   setExpandedUserId,
   setUsers,
   updateAdminUser,
-  resetAdminPassword,
   fmtDate,
   archivedVehicles,
   openVehicle,
@@ -35,8 +33,6 @@ export default function AdminTab({
         </div>
         <button type="button" className="secondary-btn" onClick={loadAdminData}>Refresh Admin Data</button>
       </div>
-
-      {temporaryPassword ? <div className="temp-password-banner">{temporaryPassword}</div> : null}
 
       <div className="admin-nav">
         <button type="button" className={`tab-btn ${adminSection === "users" ? "active" : ""}`} onClick={() => setAdminSection("users")}>Users</button>
@@ -141,9 +137,6 @@ export default function AdminTab({
                       <p><strong>Last Updated:</strong> {fmtDate(managedUser.updated_at)}</p>
                     </div>
                     <div className="admin-inline-actions">
-                      <button type="button" className="secondary-btn" onClick={() => resetAdminPassword(managedUser.id, managedUser.email)}>
-                        Reset Password
-                      </button>
                       <select
                         value={managedUser.role}
                         onChange={(event) => {

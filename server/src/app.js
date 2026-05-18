@@ -13,7 +13,7 @@ import { ROLE_LABELS, STATUS, STATUS_META } from "./workflow.js";
 import { sanitizeUser } from "./vehicle-helpers.js";
 import { getPool, getUser } from "./db.js";
 import { addAuditEntry } from "./services/audit-service.js";
-import { createVehicleRecord, generateTemporaryPassword, updateVehicleWithAudit } from "./services/vehicle-service.js";
+import { createVehicleRecord, updateVehicleWithAudit } from "./services/vehicle-service.js";
 import { getProtectedUndoField, isStatusUndo } from "./services/workflow-guards.js";
 
 const app = express();
@@ -144,8 +144,7 @@ registerAuthRoutes(app, {
   normalizeEmail,
   signAuthToken,
   jwtSecret,
-  authTokenMaxAgeMs,
-  addAuditEntry
+  authTokenMaxAgeMs
 });
 registerIntegrationRoutes(app, {
   requireBopchipboardKey,
@@ -154,7 +153,7 @@ registerIntegrationRoutes(app, {
 
 app.use("/api", requireAuth);
 
-registerAdminRoutes(app, { requireAdmin, generateTemporaryPassword, addAuditEntry });
+registerAdminRoutes(app, { requireAdmin, addAuditEntry });
 registerVehicleRoutes(app, {
   isAdmin,
   hasManagerAccess,

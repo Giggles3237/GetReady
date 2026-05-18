@@ -1,8 +1,6 @@
 import "dotenv/config";
-import bcrypt from "bcryptjs";
 import { getPool } from "../src/db.js";
 
-const defaultPassword = "ChangeMe123!";
 const bootstrapAdmin = {
   id: "u-admin-1",
   name: "System Admin",
@@ -24,27 +22,23 @@ async function main() {
       "ALTER TABLE action_definitions MODIFY COLUMN role ENUM('admin', 'salesperson', 'manager', 'bmw_genius', 'detailer', 'service_advisor') NOT NULL"
     );
 
-    const passwordHash = await bcrypt.hash(defaultPassword, 10);
     await connection.query(
       `INSERT INTO users (id, name, email, role, password_hash, must_change_password, is_active)
-       VALUES (?, ?, ?, ?, ?, 1, 1)
+       VALUES (?, ?, ?, ?, '', 0, 1)
        ON DUPLICATE KEY UPDATE
        name = VALUES(name),
        email = VALUES(email),
        role = VALUES(role),
-       password_hash = COALESCE(NULLIF(users.password_hash, ''), VALUES(password_hash)),
-       must_change_password = CASE
-         WHEN users.password_hash IS NULL OR users.password_hash = '' THEN VALUES(must_change_password)
-         ELSE users.must_change_password
-       END,
+       password_hash = '',
+       must_change_password = 0,
        is_active = VALUES(is_active)`,
-      [bootstrapAdmin.id, bootstrapAdmin.name, bootstrapAdmin.email, bootstrapAdmin.role, passwordHash]
+      [bootstrapAdmin.id, bootstrapAdmin.name, bootstrapAdmin.email, bootstrapAdmin.role]
     );
 
     await connection.commit();
     console.log("Admin role migration complete.");
     console.log(`Bootstrap admin: ${bootstrapAdmin.email}`);
-    console.log(`Temporary password (if newly created): ${defaultPassword}`);
+    console.log("Bootstrap admin signs in with email only.");
   } catch (error) {
     await connection.rollback();
     throw error;
