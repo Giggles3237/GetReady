@@ -77,7 +77,7 @@ export async function getUser(id, connection = null) {
 
 export async function getUserByEmail(email, connection = null) {
   const rows = await runQuery(
-    `SELECT ${userColumns}, password_hash FROM users WHERE email = ? LIMIT 1`,
+    `SELECT ${userColumns} FROM users WHERE email = ? LIMIT 1`,
     [String(email).trim().toLowerCase()],
     connection
   );
@@ -105,14 +105,6 @@ export async function updateUser(connection, user) {
   await runQuery(
     "UPDATE users SET name = ?, email = ?, role = ?, is_active = ? WHERE id = ?",
     [user.name, String(user.email).trim().toLowerCase(), user.role, user.is_active === false ? 0 : 1, user.id],
-    connection
-  );
-}
-
-export async function updateUserPassword(connection, { id, password_hash, must_change_password }) {
-  await runQuery(
-    "UPDATE users SET password_hash = ?, must_change_password = ? WHERE id = ?",
-    [password_hash, must_change_password ? 1 : 0, id],
     connection
   );
 }

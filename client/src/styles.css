@@ -389,67 +389,6 @@ h3 {
   width: 100%;
 }
 
-.password-field {
-  position: relative;
-  display: block;
-}
-
-.password-field input {
-  padding-right: 46px;
-}
-
-.password-toggle {
-  position: absolute;
-  top: 50%;
-  right: 1px;
-  transform: translateY(-50%);
-  width: 42px;
-  height: calc(100% - 2px);
-  border: 0;
-  border-left: 1px solid var(--line);
-  background: transparent;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-}
-
-.password-toggle:hover,
-.password-toggle:focus-visible {
-  color: var(--accent-2);
-  outline: none;
-}
-
-.eye-icon {
-  position: relative;
-  width: 18px;
-  height: 10px;
-  border: 2px solid currentColor;
-  border-radius: 999px / 80%;
-}
-
-.eye-icon::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 4px;
-  height: 4px;
-  background: currentColor;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-}
-
-.eye-icon.visible::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 20px;
-  height: 2px;
-  background: currentColor;
-  transform: translate(-50%, -50%) rotate(-28deg);
-}
-
 label {
   display: grid;
   gap: 4px;
@@ -1587,15 +1526,6 @@ select {
   border-radius: 0;
   background: rgba(10, 92, 82, 0.12);
   color: var(--accent);
-}
-
-.temp-password-banner {
-  margin-bottom: 14px;
-  padding: 12px 14px;
-  border-radius: 0;
-  background: rgba(215, 104, 60, 0.14);
-  color: #8f4a1f;
-  font-weight: 700;
 }
 
 .empty-state {

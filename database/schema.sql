@@ -3,8 +3,8 @@ CREATE TABLE users (
   name VARCHAR(100) NOT NULL,
   email VARCHAR(191) NOT NULL UNIQUE,
   role ENUM('admin', 'salesperson', 'manager', 'bmw_genius', 'detailer', 'service_advisor') NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
-  must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+  password_hash VARCHAR(255) NULL,
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

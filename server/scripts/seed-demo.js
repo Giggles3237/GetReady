@@ -1,11 +1,8 @@
 import "dotenv/config";
-import bcrypt from "bcryptjs";
 import { getPool, toMySqlDateTime } from "../src/db.js";
 import { STATUS, deriveAssignedRole } from "../src/workflow.js";
 
 const now = Date.now();
-const defaultPassword = "ChangeMe123!";
-
 const users = [
   { id: "u-admin-1", name: "System Admin", email: "admin@dealership.local", role: "admin" },
   { id: "u-sales-1", name: "Chris Lasko", email: "chris@dealership.local", role: "salesperson" },
@@ -187,20 +184,18 @@ const auditLogs = [
 ];
 
 async function seedUsers(connection) {
-  const passwordHash = await bcrypt.hash(defaultPassword, 10);
-
   for (const user of users) {
     await connection.query(
       `INSERT INTO users (id, name, email, role, password_hash, must_change_password, is_active)
-       VALUES (?, ?, ?, ?, ?, 1, 1)
+       VALUES (?, ?, ?, ?, '', 0, 1)
        ON DUPLICATE KEY UPDATE
        name = VALUES(name),
        email = VALUES(email),
        role = VALUES(role),
-       password_hash = VALUES(password_hash),
-       must_change_password = VALUES(must_change_password),
+       password_hash = '',
+       must_change_password = 0,
        is_active = VALUES(is_active)`,
-      [user.id, user.name, user.email, user.role, passwordHash]
+      [user.id, user.name, user.email, user.role]
     );
   }
 }
@@ -309,7 +304,7 @@ async function main() {
     await seedAuditLogs(connection);
     await connection.commit();
     console.log(`Seeded ${users.length} users, ${vehicles.length} vehicles, and ${auditLogs.length} audit entries.`);
-    console.log(`Default demo password: ${defaultPassword}`);
+    console.log("Demo users sign in with email only.");
   } catch (error) {
     await connection.rollback();
     throw error;

@@ -1,4 +1,3 @@
-import bcrypt from "bcryptjs";
 import { v4 as uuid } from "uuid";
 import { asyncHandler } from "../async-handler.js";
 import {
@@ -11,15 +10,13 @@ import {
   listUsers,
   listVehicles,
   updateActionDefinition,
-  updateUser,
-  updateUserPassword
+  updateUser
 } from "../db.js";
 import { ROLE_LABELS } from "../workflow.js";
 import { decorateAuditEntry, normalizeActionDefinition, normalizeVehicle, sanitizeUser } from "../vehicle-helpers.js";
 
 export function registerAdminRoutes(app, {
   requireAdmin,
-  generateTemporaryPassword,
   addAuditEntry
 }) {
   app.post("/api/admin/users", requireAdmin, asyncHandler(async (req, res) => {
@@ -34,14 +31,13 @@ export function registerAdminRoutes(app, {
       return res.status(409).json({ message: "That email is already in use." });
     }
 
-    const temporaryPassword = generateTemporaryPassword();
     const newUser = {
       id: uuid(),
       name: String(name).trim(),
       email: String(email).trim().toLowerCase(),
       role,
-      password_hash: await bcrypt.hash(temporaryPassword, 10),
-      must_change_password: true,
+      password_hash: "",
+      must_change_password: false,
       is_active: true
     };
 
@@ -68,7 +64,6 @@ export function registerAdminRoutes(app, {
 
     res.status(201).json({
       user: sanitizeUser(await getUser(newUser.id)),
-      temporaryPassword,
       users: (await listUsers()).map(sanitizeUser)
     });
   }));
@@ -149,40 +144,8 @@ export function registerAdminRoutes(app, {
     res.json({ user: sanitizeUser(await getUser(req.params.id)), users: (await listUsers()).map(sanitizeUser) });
   }));
 
-  app.post("/api/admin/users/:id/reset-password", requireAdmin, asyncHandler(async (req, res) => {
-    const targetUser = await getUser(req.params.id);
-
-    if (!targetUser) {
-      return res.status(404).json({ message: "User not found." });
-    }
-
-    const temporaryPassword = generateTemporaryPassword();
-    const pool = getPool();
-    const connection = await pool.getConnection();
-
-    try {
-      await connection.beginTransaction();
-      await updateUserPassword(connection, {
-        id: targetUser.id,
-        password_hash: await bcrypt.hash(temporaryPassword, 10),
-        must_change_password: true
-      });
-      await addAuditEntry(connection, {
-        userId: req.currentUser.id,
-        actionType: "admin_password_reset",
-        fieldChanged: `user:${targetUser.id}:password_reset`,
-        oldValue: "",
-        newValue: "temporary password issued"
-      });
-      await connection.commit();
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
-    }
-
-    res.json({ temporaryPassword });
+  app.post("/api/admin/users/:id/reset-password", requireAdmin, asyncHandler(async (_req, res) => {
+    res.status(410).json({ message: "Password resets are no longer needed because users sign in with email only." });
   }));
 
   app.get("/api/admin/actions", requireAdmin, asyncHandler(async (_req, res) => {

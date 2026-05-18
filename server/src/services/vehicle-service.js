@@ -3,10 +3,6 @@ import { getPool, getVehicle, insertVehicle, listUsers, replaceVehicle } from ".
 import { STATUS, deriveAssignedRole, syncWorkflowState } from "../workflow.js";
 import { inferLocation, normalizeVehicle } from "../vehicle-helpers.js";
 
-export function generateTemporaryPassword() {
-  return `Temp${Math.random().toString(36).slice(2, 8)}!9`;
-}
-
 function buildDueDateFromParts(dateValue, timeValue = "14:00") {
   if (!dateValue) {
     return null;

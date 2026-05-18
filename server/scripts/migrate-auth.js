@@ -1,8 +1,5 @@
 import "dotenv/config";
-import bcrypt from "bcryptjs";
 import { getPool } from "../src/db.js";
-
-const defaultPassword = "ChangeMe123!";
 
 const defaultEmails = new Map([
   ["u-admin-1", "admin@dealership.local"],
@@ -42,17 +39,15 @@ async function addUniqueIndexIfMissing(connection, tableName, indexName, ddl) {
 async function main() {
   const pool = getPool();
   const connection = await pool.getConnection();
-  const passwordHash = await bcrypt.hash(defaultPassword, 10);
-
   try {
     await connection.beginTransaction();
 
     await addColumnIfMissing(connection, "users", "email", "VARCHAR(191) NULL");
     await addColumnIfMissing(connection, "users", "password_hash", "VARCHAR(255) NULL");
-    await addColumnIfMissing(connection, "users", "must_change_password", "BOOLEAN NOT NULL DEFAULT TRUE");
+    await addColumnIfMissing(connection, "users", "must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE");
     await addColumnIfMissing(connection, "users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE");
 
-    const [users] = await connection.query("SELECT id, name, email, password_hash FROM users");
+    const [users] = await connection.query("SELECT id, name, email FROM users");
     for (const user of users) {
       const fallbackEmail =
         defaultEmails.get(user.id) ??
@@ -61,24 +56,22 @@ async function main() {
       await connection.query(
         `UPDATE users
          SET email = COALESCE(NULLIF(email, ''), ?),
-             password_hash = COALESCE(NULLIF(password_hash, ''), ?),
-             must_change_password = CASE
-               WHEN password_hash IS NULL OR password_hash = '' THEN TRUE
-               ELSE must_change_password
-             END,
+             password_hash = '',
+             must_change_password = FALSE,
              is_active = COALESCE(is_active, TRUE)
          WHERE id = ?`,
-        [fallbackEmail, passwordHash, user.id]
+        [fallbackEmail, user.id]
       );
     }
 
     await connection.query("ALTER TABLE users MODIFY COLUMN email VARCHAR(191) NOT NULL");
-    await connection.query("ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NOT NULL");
+    await connection.query("ALTER TABLE users MODIFY COLUMN password_hash VARCHAR(255) NULL");
+    await connection.query("ALTER TABLE users MODIFY COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE");
     await addUniqueIndexIfMissing(connection, "users", "uq_users_email", "CREATE UNIQUE INDEX uq_users_email ON users(email)");
 
     await connection.commit();
-    console.log("Auth migration complete.");
-    console.log(`Default password applied where missing: ${defaultPassword}`);
+    console.log("Passwordless auth migration complete.");
+    console.log("Users now sign in with email only and are not prompted to change passwords.");
   } catch (error) {
     await connection.rollback();
     throw error;

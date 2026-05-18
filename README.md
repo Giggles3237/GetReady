@@ -83,15 +83,14 @@ The backend now also allows common Capacitor origins such as `capacitor://localh
 - The app now uses token-based login instead of browser session cookies
 - The frontend stores the auth token locally and sends it with each API request
 - Auth tokens default to a 90-day expiration
-- Existing demo users can be bootstrapped with:
+- Existing demo users can be bootstrapped, and existing password-change flags can be cleared, with:
 
 ```bash
 cd server
 npm run migrate:auth
 ```
 
-- Default migrated password: `ChangeMe123!`
-- Users are forced to change that temporary password on first sign-in
+- Users sign in with their dealership email only. Password prompts have been removed.
 
 ## Demo workflow notes
 

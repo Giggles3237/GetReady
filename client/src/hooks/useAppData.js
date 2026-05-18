@@ -60,7 +60,6 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
   const [auditFeed, setAuditFeed] = useState([]);
   const [archivedVehicles, setArchivedVehicles] = useState([]);
   const [reportsOverview, setReportsOverview] = useState(null);
-  const [temporaryPassword, setTemporaryPassword] = useState("");
   const [newUser, setNewUser] = useState({ name: "", email: "", role: "salesperson" });
   const [submission, setSubmission] = useState(createEmptySubmission(authUser?.id));
   const [error, setError] = useState("");
@@ -298,7 +297,6 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     event.preventDefault();
 
     setError("");
-    setTemporaryPassword("");
     const data = await request("/vehicles", {
       method: "POST",
       body: JSON.stringify({
@@ -335,7 +333,6 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     });
     setUsers(data.users);
     setNewUser({ name: "", email: "", role: "salesperson" });
-    setTemporaryPassword(`${data.user.email} temporary password: ${data.temporaryPassword}`);
     setSuccessMessage(`${data.user.name} created successfully.`);
     await loadAdminData();
   }
@@ -347,15 +344,6 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     });
     setUsers(data.users);
     await loadAdminData();
-  }
-
-  async function resetAdminPassword(targetUserId, email) {
-    const data = await request(`/admin/users/${targetUserId}/reset-password`, {
-      method: "POST",
-      body: JSON.stringify({})
-    });
-    setTemporaryPassword(`${email} temporary password: ${data.temporaryPassword}`);
-    setSuccessMessage("Temporary password reset successfully.");
   }
 
   const filteredForDisplay = useMemo(
@@ -468,7 +456,6 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     setAuditFeed([]);
     setReportsOverview(null);
     setSuccessMessage("");
-    setTemporaryPassword("");
     setArchiveNotice(null);
     setSearch("");
     setSearchOpen(false);
@@ -509,7 +496,6 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     auditFeed,
     archivedVehicles,
     reportsOverview,
-    temporaryPassword,
     newUser,
     setNewUser,
     submission,
@@ -535,7 +521,6 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     updateAdminAction,
     createAdminUser,
     updateAdminUser,
-    resetAdminPassword,
     grouped,
     overdueActionVehicles,
     mySubmittedVehicles,
