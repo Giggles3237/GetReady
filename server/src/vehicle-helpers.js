@@ -1,4 +1,6 @@
 import {
+  ACTION_LABELS,
+  LEGACY_ACTION_LABELS,
   buildActionList,
   computeBlockingIssues,
   deriveAssignedRole,
@@ -53,9 +55,13 @@ export function normalizeVehicle(row) {
 }
 
 export function normalizeActionDefinition(row) {
+  const normalizedLabel = String(row.label ?? "").trim();
+  const legacyLabels = LEGACY_ACTION_LABELS[row.action_key] ?? [];
+  const shouldUseCanonicalLabel = !normalizedLabel || normalizedLabel === row.action_key || legacyLabels.includes(normalizedLabel);
+
   return {
     key: row.action_key,
-    label: row.label,
+    label: shouldUseCanonicalLabel ? (ACTION_LABELS[row.action_key] ?? row.label) : row.label,
     role: row.role,
     type: row.action_type,
     enabled: Boolean(row.enabled),

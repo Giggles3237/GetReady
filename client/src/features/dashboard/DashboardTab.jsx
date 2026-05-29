@@ -1,5 +1,3 @@
-import { useState } from "react";
-import Flag from "../../components/ui/Flag";
 import { formatStockNumber } from "../../utils/appHelpers";
 
 export default function DashboardTab({
@@ -28,8 +26,6 @@ export default function DashboardTab({
   pipelineColumns,
   grouped
 }) {
-  const [expandedVehicleId, setExpandedVehicleId] = useState(null);
-
   return (
     <>
       <section className="panel">
@@ -80,8 +76,6 @@ export default function DashboardTab({
                   key={`overdue-${vehicle.id}`}
                   vehicle={vehicle}
                   role={role}
-                  isExpanded={expandedVehicleId === vehicle.id}
-                  onToggle={() => setExpandedVehicleId((current) => current === vehicle.id ? null : vehicle.id)}
                   openVehicle={openVehicle}
                   isOverdue={isOverdue}
                   getVehicleTimeTone={getVehicleTimeTone}
@@ -110,8 +104,6 @@ export default function DashboardTab({
                       key={vehicle.id}
                       vehicle={vehicle}
                       role={role}
-                      isExpanded={expandedVehicleId === vehicle.id}
-                      onToggle={() => setExpandedVehicleId((current) => current === vehicle.id ? null : vehicle.id)}
                       openVehicle={openVehicle}
                       isOverdue={isOverdue}
                       getVehicleTimeTone={getVehicleTimeTone}
@@ -142,8 +134,6 @@ export default function DashboardTab({
                     key={`submitted-${vehicle.id}`}
                     vehicle={vehicle}
                     role={role}
-                    isExpanded={expandedVehicleId === vehicle.id}
-                    onToggle={() => setExpandedVehicleId((current) => current === vehicle.id ? null : vehicle.id)}
                     openVehicle={openVehicle}
                     isOverdue={isOverdue}
                     getVehicleTimeTone={getVehicleTimeTone}
@@ -195,66 +185,45 @@ export default function DashboardTab({
 function DashboardListRow({
   vehicle,
   role,
-  isExpanded,
-  onToggle,
   openVehicle,
   isOverdue,
   getVehicleTimeTone,
   getVehicleTimeLabel,
   getNextActionForRole,
   fmtDate,
-  getWorkflowBadges,
   emphasized = false,
   submittedView = false
 }) {
   const overdue = isOverdue(vehicle.due_date) && vehicle.status !== "ready";
   const nextAction = getNextActionForRole(vehicle, role);
-  const visibleBadges = getWorkflowBadges(vehicle).slice(0, 3);
 
   return (
-    <div className={`dashboard-row ${overdue ? "overdue" : ""} ${submittedView ? "" : "actionable"} ${emphasized ? "emphasized" : ""} ${isExpanded ? "expanded" : ""}`}>
-      <button type="button" className="dashboard-row-summary" onClick={onToggle}>
-        <div className="dashboard-row-main">
+    <div className={`dashboard-row ${overdue ? "overdue" : ""} ${submittedView ? "" : "actionable"} ${emphasized ? "emphasized" : ""}`}>
+      <button type="button" className="dashboard-row-button" onClick={() => openVehicle(vehicle.id)}>
+        <div className="dashboard-row-line">
           <strong className="stock">{formatStockNumber(vehicle.stock_number)}</strong>
           <div className="dashboard-row-copy">
             <span className="dashboard-row-title">{vehicle.year} {vehicle.make} {vehicle.model}</span>
-            <span className="dashboard-row-subtitle">{formatCompactStatus(vehicle.status)} | {vehicle.current_location}</span>
+            <span className="dashboard-row-subtitle">{formatCompactStatus(vehicle.status)}</span>
           </div>
-        </div>
-        <div className="dashboard-row-meta">
-          <span className={`status-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</span>
-          <span className="dashboard-row-toggle" aria-hidden="true">{isExpanded ? "−" : "+"}</span>
-        </div>
-      </button>
-
-      {isExpanded ? (
-        <div className="dashboard-row-detail">
           {nextAction ? (
-            <div className={`next-action-banner ${overdue ? "danger" : ""}`}>
-              <span className="next-action-label">Next Action</span>
-              <strong>{nextAction.label}</strong>
-            </div>
-          ) : null}
-
-          <div className="dashboard-row-info">
-            <span>Due {fmtDate(vehicle.due_date)}</span>
-            <span>{vehicle.assigned_to_name || "Unassigned"}</span>
-            <span>{vehicle.color}</span>
-          </div>
-
-          <div className="workflow-row">
-            {visibleBadges.map((badge) => <Flag key={`${vehicle.id}-${badge.label}`} label={badge.label} tone={badge.tone} />)}
-          </div>
-
-          {role === "detailer" ? <div className={`time-left-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</div> : null}
-
-          <div className="dashboard-row-actions">
-            <button type="button" className="secondary-btn" onClick={() => openVehicle(vehicle.id)}>
-              View Details
-            </button>
+          <p className={`dashboard-row-next ${overdue ? "danger" : ""}`}>
+            <span>Next:</span> {nextAction.label}
+          </p>
+        ) : null}
+          <div className="dashboard-row-meta">
+            <span className={`status-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</span>
           </div>
         </div>
-      ) : null}
+
+        <div className="dashboard-row-info">
+          <span>Due {fmtDate(vehicle.due_date)}</span>
+          <span>{vehicle.color}</span>
+          <span>{vehicle.current_location}</span>
+        </div>
+
+        {role === "detailer" ? <div className={`time-left-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</div> : null}
+      </button>
     </div>
   );
 }

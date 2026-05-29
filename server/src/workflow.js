@@ -29,20 +29,46 @@ export const ROLE_LABELS = {
   service_advisor: "Service Advisor"
 };
 
+export const ACTION_LABELS = {
+  [STATUS.TO_DETAIL]: "Take Car To Detail",
+  [STATUS.DETAIL_STARTED]: "Start Detail",
+  [STATUS.DETAIL_FINISHED]: "Finish Detail",
+  [STATUS.REMOVED_FROM_DETAIL]: "Move Vehicle Out of Detail",
+  complete_qc: "Complete Final QC",
+  start_service: "Start Service",
+  complete_service: "Complete Service",
+  start_bodywork: "Start Body Work",
+  complete_bodywork: "Complete Body Work",
+  toggle_recall: "Check Recalls",
+  complete_recall: "Complete Recall Work",
+  toggle_fueled: "Fuel Vehicle",
+  [STATUS.READY]: "Mark Ready"
+};
+
+export const LEGACY_ACTION_LABELS = {
+  [STATUS.REMOVED_FROM_DETAIL]: ["Remove From Detail", "Bring Car Up From Detail"],
+  complete_qc: ["Complete QC"],
+  start_service: ["Service Started"],
+  start_bodywork: ["Body Work Started"],
+  toggle_recall: ["Recalls Checked"],
+  complete_recall: ["Recall Completed"],
+  toggle_fueled: ["Fuel The Car"]
+};
+
 export const DEFAULT_ACTION_DEFINITIONS = [
-  { key: STATUS.TO_DETAIL, label: "Take Car To Detail", role: "bmw_genius", type: "status", enabled: true },
-  { key: STATUS.DETAIL_STARTED, label: "Start Detail", role: "detailer", type: "status", enabled: true },
-  { key: STATUS.DETAIL_FINISHED, label: "Finish Detail", role: "detailer", type: "status", enabled: true },
-  { key: STATUS.REMOVED_FROM_DETAIL, label: "Remove From Detail", role: "bmw_genius", type: "status", enabled: true },
-  { key: "complete_qc", label: "Complete QC", role: "manager", type: "flag", enabled: true },
-  { key: "start_service", label: "Service Started", role: "service_advisor", type: "flag", enabled: true },
-  { key: "complete_service", label: "Complete Service", role: "service_advisor", type: "flag", enabled: true },
-  { key: "start_bodywork", label: "Body Work Started", role: "service_advisor", type: "flag", enabled: true },
-  { key: "complete_bodywork", label: "Complete Body Work", role: "service_advisor", type: "flag", enabled: true },
-  { key: "toggle_recall", label: "Recalls Checked", role: "service_advisor", type: "flag", enabled: true },
-  { key: "complete_recall", label: "Recall Completed", role: "service_advisor", type: "flag", enabled: true },
-  { key: "toggle_fueled", label: "Fuel The Car", role: "bmw_genius", type: "flag", enabled: true },
-  { key: STATUS.READY, label: "Mark Ready", role: "manager", type: "status", enabled: true }
+  { key: STATUS.TO_DETAIL, label: ACTION_LABELS[STATUS.TO_DETAIL], role: "bmw_genius", type: "status", enabled: true },
+  { key: STATUS.DETAIL_STARTED, label: ACTION_LABELS[STATUS.DETAIL_STARTED], role: "detailer", type: "status", enabled: true },
+  { key: STATUS.DETAIL_FINISHED, label: ACTION_LABELS[STATUS.DETAIL_FINISHED], role: "detailer", type: "status", enabled: true },
+  { key: STATUS.REMOVED_FROM_DETAIL, label: ACTION_LABELS[STATUS.REMOVED_FROM_DETAIL], role: "bmw_genius", type: "status", enabled: true },
+  { key: "complete_qc", label: ACTION_LABELS.complete_qc, role: "manager", type: "flag", enabled: true },
+  { key: "start_service", label: ACTION_LABELS.start_service, role: "service_advisor", type: "flag", enabled: true },
+  { key: "complete_service", label: ACTION_LABELS.complete_service, role: "service_advisor", type: "flag", enabled: true },
+  { key: "start_bodywork", label: ACTION_LABELS.start_bodywork, role: "service_advisor", type: "flag", enabled: true },
+  { key: "complete_bodywork", label: ACTION_LABELS.complete_bodywork, role: "service_advisor", type: "flag", enabled: true },
+  { key: "toggle_recall", label: ACTION_LABELS.toggle_recall, role: "service_advisor", type: "flag", enabled: true },
+  { key: "complete_recall", label: ACTION_LABELS.complete_recall, role: "service_advisor", type: "flag", enabled: true },
+  { key: "toggle_fueled", label: ACTION_LABELS.toggle_fueled, role: "bmw_genius", type: "flag", enabled: true },
+  { key: STATUS.READY, label: ACTION_LABELS[STATUS.READY], role: "manager", type: "status", enabled: true }
 ];
 
 function canRoleHandleAction(actionKey, role) {
