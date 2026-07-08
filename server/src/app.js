@@ -11,7 +11,7 @@ import { registerIntegrationRoutes } from "./routes/integration-routes.js";
 import { registerVehicleRoutes } from "./routes/vehicle-routes.js";
 import { ROLE_LABELS, STATUS, STATUS_META } from "./workflow.js";
 import { sanitizeUser } from "./vehicle-helpers.js";
-import { getPool, getUser } from "./db.js";
+import { ensureNotificationTables, ensureSessionTable, getPool, getUser } from "./db.js";
 import { addAuditEntry } from "./services/audit-service.js";
 import { createVehicleRecord, updateVehicleWithAudit } from "./services/vehicle-service.js";
 import { getProtectedUndoField, isStatusUndo } from "./services/workflow-guards.js";
@@ -178,15 +178,18 @@ app.use((err, _req, res, _next) => {
   res.status(err.statusCode || 500).json({ message: err.message || "Unexpected server error." });
 });
 
-app.listen(port, () => {
-  console.log(`Get Ready API listening on ${port} with ${authTokenTtlDays}-day auth tokens`);
-});
+async function startServer() {
+  await getPool().query("SELECT 1");
+  await ensureSessionTable();
+  await ensureNotificationTables();
+  console.log("Initial database connectivity check passed");
 
-getPool()
-  .query("SELECT 1")
-  .then(() => {
-    console.log("Initial database connectivity check passed");
-  })
-  .catch((error) => {
-    console.error("Initial database connectivity check failed", error);
+  app.listen(port, () => {
+    console.log(`Get Ready API listening on ${port} with ${authTokenTtlDays}-day auth tokens`);
   });
+}
+
+startServer().catch((error) => {
+  console.error("Initial database setup failed", error);
+  process.exit(1);
+});
