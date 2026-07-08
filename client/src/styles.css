@@ -968,13 +968,15 @@ select {
 }
 
 .notification-user-row {
+  display: grid;
   align-items: flex-start;
+  gap: 8px;
   border: 1px solid var(--line);
   background: rgba(17, 24, 32, 0.03);
   padding: 10px;
 }
 
-.notification-user-row span {
+.notification-user-copy {
   display: grid;
   gap: 2px;
 }

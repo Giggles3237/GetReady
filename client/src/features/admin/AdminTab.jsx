@@ -81,40 +81,71 @@ export default function AdminTab({
       {adminSection === "notifications" ? (
         <div className="admin-list">
           <div className="empty-inline">
-            Email alerts are sent when a unit moves into a new bucket. SMTP must be configured on the server before messages are delivered.
+            Alerts are sent when a unit moves into a new bucket. Email requires SMTP, and texts require Twilio plus an SMS-enabled mobile number on the user.
           </div>
 
           {notificationBuckets.map((bucket) => {
             const rule = notificationRules.find((item) => item.bucket === bucket);
-            const selectedUserIds = rule?.user_ids ?? [];
+            const selectedEmailUserIds = rule?.email_user_ids ?? rule?.user_ids ?? [];
+            const selectedSmsUserIds = rule?.sms_user_ids ?? [];
 
             return (
               <div key={bucket} className="admin-card">
                 <div className="admin-card-head">
                   <div>
                     <strong>{bucket}</strong>
-                    <p className="admin-meta">{selectedUserIds.length} email recipient{selectedUserIds.length === 1 ? "" : "s"}</p>
+                    <p className="admin-meta">
+                      {selectedEmailUserIds.length} email recipient{selectedEmailUserIds.length === 1 ? "" : "s"} | {selectedSmsUserIds.length} text recipient{selectedSmsUserIds.length === 1 ? "" : "s"}
+                    </p>
                   </div>
                 </div>
                 <div className="notification-user-grid">
-                  {activeUsers.map((managedUser) => (
-                    <label key={`${bucket}-${managedUser.id}`} className="toggle-line notification-user-row">
-                      <input
-                        type="checkbox"
-                        checked={selectedUserIds.includes(managedUser.id)}
-                        onChange={(event) => {
-                          const nextUserIds = event.target.checked
-                            ? [...selectedUserIds, managedUser.id]
-                            : selectedUserIds.filter((userId) => userId !== managedUser.id);
-                          updateNotificationRule(bucket, nextUserIds);
-                        }}
-                      />
-                      <span>
-                        <strong>{managedUser.name}</strong>
-                        <small>{managedUser.email}</small>
-                      </span>
-                    </label>
-                  ))}
+                  {activeUsers.map((managedUser) => {
+                    const canReceiveSms = Boolean(managedUser.sms_enabled && managedUser.mobile_phone);
+
+                    return (
+                      <div key={`${bucket}-${managedUser.id}`} className="notification-user-row">
+                        <div className="notification-user-copy">
+                          <strong>{managedUser.name}</strong>
+                          <small>{managedUser.email}</small>
+                          <small>{managedUser.mobile_phone || "No mobile number"}</small>
+                        </div>
+                        <label className="toggle-line">
+                          <input
+                            type="checkbox"
+                            checked={selectedEmailUserIds.includes(managedUser.id)}
+                            onChange={(event) => {
+                              const nextEmailUserIds = event.target.checked
+                                ? [...selectedEmailUserIds, managedUser.id]
+                                : selectedEmailUserIds.filter((userId) => userId !== managedUser.id);
+                              updateNotificationRule(bucket, {
+                                email_user_ids: nextEmailUserIds,
+                                sms_user_ids: selectedSmsUserIds
+                              });
+                            }}
+                          />
+                          Email
+                        </label>
+                        <label className="toggle-line">
+                          <input
+                            type="checkbox"
+                            checked={selectedSmsUserIds.includes(managedUser.id)}
+                            disabled={!canReceiveSms}
+                            onChange={(event) => {
+                              const nextSmsUserIds = event.target.checked
+                                ? [...selectedSmsUserIds, managedUser.id]
+                                : selectedSmsUserIds.filter((userId) => userId !== managedUser.id);
+                              updateNotificationRule(bucket, {
+                                email_user_ids: selectedEmailUserIds,
+                                sms_user_ids: nextSmsUserIds
+                              });
+                            }}
+                          />
+                          Text
+                        </label>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -144,6 +175,19 @@ export default function AdminTab({
             <label>
               Email
               <input type="email" value={newUser.email} onChange={(event) => setNewUser((current) => ({ ...current, email: event.target.value }))} required />
+            </label>
+            <label>
+              Mobile Number
+              <input value={newUser.mobile_phone} onChange={(event) => setNewUser((current) => ({ ...current, mobile_phone: event.target.value }))} placeholder="+15551234567" />
+            </label>
+            <label className="toggle-line">
+              <input
+                type="checkbox"
+                checked={newUser.sms_enabled}
+                onChange={(event) => setNewUser((current) => ({ ...current, sms_enabled: event.target.checked }))}
+                disabled={!newUser.mobile_phone.trim()}
+              />
+              Enable text alerts
             </label>
             <label>
               Role
@@ -183,10 +227,34 @@ export default function AdminTab({
                   <div className="user-detail-row">
                     <div className="user-detail-copy">
                       <p><strong>Email:</strong> {managedUser.email}</p>
+                      <p><strong>Mobile:</strong> {managedUser.mobile_phone || "Not set"}</p>
+                      <p><strong>Text Alerts:</strong> {managedUser.sms_enabled ? "Enabled" : "Disabled"}</p>
                       <p><strong>Created:</strong> {fmtDate(managedUser.created_at)}</p>
                       <p><strong>Last Updated:</strong> {fmtDate(managedUser.updated_at)}</p>
                     </div>
                     <div className="admin-inline-actions">
+                      <input
+                        value={managedUser.mobile_phone || ""}
+                        onChange={(event) => {
+                          const mobilePhone = event.target.value;
+                          setUsers((current) => current.map((item) => item.id === managedUser.id ? { ...item, mobile_phone: mobilePhone } : item));
+                        }}
+                        onBlur={(event) => updateAdminUser(managedUser.id, { mobile_phone: event.target.value })}
+                        placeholder="+15551234567"
+                      />
+                      <label className="toggle-line">
+                        <input
+                          type="checkbox"
+                          checked={managedUser.sms_enabled}
+                          disabled={!managedUser.mobile_phone}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setUsers((current) => current.map((item) => item.id === managedUser.id ? { ...item, sms_enabled: checked } : item));
+                            updateAdminUser(managedUser.id, { sms_enabled: checked });
+                          }}
+                        />
+                        Text Alerts
+                      </label>
                       <select
                         value={managedUser.role}
                         onChange={(event) => {

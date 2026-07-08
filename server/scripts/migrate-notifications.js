@@ -29,12 +29,28 @@ async function createIndexIfMissing(connection, tableName, indexName, ddl) {
   }
 }
 
+async function addColumnIfMissing(connection, tableName, columnName, definition) {
+  const [rows] = await connection.query(
+    `SELECT COUNT(*) AS count
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [tableName, columnName]
+  );
+
+  if (Number(rows[0]?.count ?? 0) === 0) {
+    await connection.query(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
 async function main() {
   const pool = getPool();
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
+
+    await addColumnIfMissing(connection, "users", "mobile_phone", "VARCHAR(30) NULL");
+    await addColumnIfMissing(connection, "users", "sms_enabled", "BOOLEAN NOT NULL DEFAULT FALSE");
 
     if (!(await tableExists(connection, "notification_rules"))) {
       await connection.query(`

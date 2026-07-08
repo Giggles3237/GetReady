@@ -69,7 +69,23 @@ async function addIndexIfMissing(tableName, indexName, ddl) {
   }
 }
 
+async function addColumnIfMissing(tableName, columnName, definition) {
+  const rows = await runQuery(
+    `SELECT COUNT(*) AS count
+     FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [tableName, columnName]
+  );
+
+  if (Number(rows[0]?.count ?? 0) === 0) {
+    await runQuery(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
 export async function ensureNotificationTables() {
+  await addColumnIfMissing("users", "mobile_phone", "VARCHAR(30) NULL");
+  await addColumnIfMissing("users", "sms_enabled", "BOOLEAN NOT NULL DEFAULT FALSE");
+
   await runQuery(`
     CREATE TABLE IF NOT EXISTS notification_rules (
       bucket VARCHAR(80) NOT NULL,
@@ -124,7 +140,7 @@ async function runQuery(sql, params = [], connection = null) {
 }
 
 const userColumns = `
-  id, name, email, role, must_change_password, is_active, created_at, updated_at
+  id, name, email, mobile_phone, sms_enabled, role, must_change_password, is_active, created_at, updated_at
 `;
 
 export async function listUsers(connection = null) {
@@ -147,12 +163,14 @@ export async function getUserByEmail(email, connection = null) {
 
 export async function createUser(connection, user) {
   await runQuery(
-    `INSERT INTO users (id, name, email, role, password_hash, must_change_password, is_active)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO users (id, name, email, mobile_phone, sms_enabled, role, password_hash, must_change_password, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       user.id,
       user.name,
       String(user.email).trim().toLowerCase(),
+      user.mobile_phone || null,
+      user.sms_enabled ? 1 : 0,
       user.role,
       user.password_hash,
       user.must_change_password ? 1 : 0,
@@ -164,8 +182,16 @@ export async function createUser(connection, user) {
 
 export async function updateUser(connection, user) {
   await runQuery(
-    "UPDATE users SET name = ?, email = ?, role = ?, is_active = ? WHERE id = ?",
-    [user.name, String(user.email).trim().toLowerCase(), user.role, user.is_active === false ? 0 : 1, user.id],
+    "UPDATE users SET name = ?, email = ?, mobile_phone = ?, sms_enabled = ?, role = ?, is_active = ? WHERE id = ?",
+    [
+      user.name,
+      String(user.email).trim().toLowerCase(),
+      user.mobile_phone || null,
+      user.sms_enabled ? 1 : 0,
+      user.role,
+      user.is_active === false ? 0 : 1,
+      user.id
+    ],
     connection
   );
 }
@@ -196,14 +222,18 @@ export async function listNotificationRules(connection = null) {
   );
 }
 
-export async function replaceNotificationRulesForBucket(connection, bucket, userIds) {
+export async function replaceNotificationRulesForBucket(connection, bucket, { emailUserIds = [], smsUserIds = [] }) {
   await runQuery("DELETE FROM notification_rules WHERE bucket = ?", [bucket], connection);
 
-  for (const userId of userIds) {
+  const allUserIds = [...new Set([...emailUserIds, ...smsUserIds])];
+  const emailUserIdSet = new Set(emailUserIds);
+  const smsUserIdSet = new Set(smsUserIds);
+
+  for (const userId of allUserIds) {
     await runQuery(
       `INSERT INTO notification_rules (bucket, user_id, email_enabled, sms_enabled)
-       VALUES (?, ?, TRUE, FALSE)`,
-      [bucket, userId],
+       VALUES (?, ?, ?, ?)`,
+      [bucket, userId, emailUserIdSet.has(userId) ? 1 : 0, smsUserIdSet.has(userId) ? 1 : 0],
       connection
     );
   }

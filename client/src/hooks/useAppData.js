@@ -44,15 +44,23 @@ function buildNotificationNotice(notification) {
     return null;
   }
 
-  const recipientNames = notification.sent.map((recipient) => recipient.name || recipient.email).join(", ");
+  const emailCount = notification.sent.filter((recipient) => recipient.channel === "email").length;
+  const smsCount = notification.sent.filter((recipient) => recipient.channel === "sms").length;
+  const sentParts = [
+    emailCount > 0 ? `${emailCount} email${emailCount === 1 ? "" : "s"}` : "",
+    smsCount > 0 ? `${smsCount} text${smsCount === 1 ? "" : "s"}` : ""
+  ].filter(Boolean);
+  const recipientNames = notification.sent
+    .map((recipient) => recipient.name || recipient.email || recipient.mobile_phone)
+    .join(", ");
   const failedCount = notification.failed?.length ?? 0;
 
   return {
-    title: notification.sent.length === 1 ? "Email Notification Sent" : "Email Notifications Sent",
+    title: notification.sent.length === 1 ? "Notification Sent" : "Notifications Sent",
     message: [
-      `${notification.sent.length} email${notification.sent.length === 1 ? "" : "s"} sent for ${notification.bucket}.`,
+      `${sentParts.join(" and ")} sent for ${notification.bucket}.`,
       recipientNames ? `Recipients: ${recipientNames}.` : "",
-      failedCount > 0 ? `${failedCount} email${failedCount === 1 ? "" : "s"} failed. Check server logs for details.` : ""
+      failedCount > 0 ? `${failedCount} notification${failedCount === 1 ? "" : "s"} failed. Check server logs for details.` : ""
     ].filter(Boolean).join(" ")
   };
 }
@@ -80,7 +88,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
   const [auditFeed, setAuditFeed] = useState([]);
   const [archivedVehicles, setArchivedVehicles] = useState([]);
   const [reportsOverview, setReportsOverview] = useState(null);
-  const [newUser, setNewUser] = useState({ name: "", email: "", role: "salesperson" });
+  const [newUser, setNewUser] = useState({ name: "", email: "", mobile_phone: "", sms_enabled: false, role: "salesperson" });
   const [submission, setSubmission] = useState(createEmptySubmission(authUser?.id));
   const [error, setError] = useState("");
 
@@ -360,7 +368,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
   async function updateNotificationRule(bucket, userIds) {
     const data = await request(`/admin/notifications/${encodeURIComponent(bucket)}`, {
       method: "PATCH",
-      body: JSON.stringify({ user_ids: userIds })
+      body: JSON.stringify(Array.isArray(userIds) ? { user_ids: userIds } : userIds)
     });
     setNotificationBuckets(data.buckets);
     setNotificationRules(data.rules);
@@ -374,7 +382,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
       body: JSON.stringify(newUser)
     });
     setUsers(data.users);
-    setNewUser({ name: "", email: "", role: "salesperson" });
+    setNewUser({ name: "", email: "", mobile_phone: "", sms_enabled: false, role: "salesperson" });
     setSuccessMessage(`${data.user.name} created successfully.`);
     await loadAdminData();
   }

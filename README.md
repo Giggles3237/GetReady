@@ -139,6 +139,9 @@ Required Render environment variables:
 - `SMTP_PORT` optional, defaults to `587`
 - `SMTP_SECURE=true` optional for SMTP providers that require TLS on connect
 - `SMTP_USER` and `SMTP_PASSWORD` optional, depending on the SMTP provider
+- `TWILIO_ACCOUNT_SID` to enable SMS notifications
+- `TWILIO_AUTH_TOKEN` for Twilio API access
+- `TWILIO_FROM_NUMBER` for a Twilio sender phone number, or `TWILIO_MESSAGING_SERVICE_SID` if using a Messaging Service
 
 Gmail SMTP example:
 
@@ -152,6 +155,16 @@ SMTP_FROM="BMW Get Ready <your-gmail-address@gmail.com>"
 ```
 
 For Gmail, use a Google app password instead of the normal mailbox password. Google requires 2-Step Verification before app passwords can be created.
+
+Twilio SMS example:
+
+```bash
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TWILIO_AUTH_TOKEN=your-twilio-auth-token
+TWILIO_FROM_NUMBER=+15551234567
+```
+
+If you configure a Twilio Messaging Service, use `TWILIO_MESSAGING_SERVICE_SID` instead of `TWILIO_FROM_NUMBER`.
 
 ### Vercel frontend
 

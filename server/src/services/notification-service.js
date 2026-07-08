@@ -1,9 +1,11 @@
 import { v4 as uuid } from "uuid";
 import nodemailer from "nodemailer";
+import twilio from "twilio";
 import { getPool, insertNotificationDelivery, listNotificationRules, listUsers } from "../db.js";
 import { getPipelineColumn, STATUS_META } from "../workflow.js";
 
 let transporter;
+let smsClient;
 
 function getEmailTransporter() {
   if (transporter !== undefined) {
@@ -28,6 +30,24 @@ function getEmailTransporter() {
   });
 
   return transporter;
+}
+
+function getSmsClient() {
+  if (smsClient !== undefined) {
+    return smsClient;
+  }
+
+  if (
+    !process.env.TWILIO_ACCOUNT_SID ||
+    !process.env.TWILIO_AUTH_TOKEN ||
+    (!process.env.TWILIO_FROM_NUMBER && !process.env.TWILIO_MESSAGING_SERVICE_SID)
+  ) {
+    smsClient = null;
+    return smsClient;
+  }
+
+  smsClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+  return smsClient;
 }
 
 function formatDueDate(value) {
@@ -67,8 +87,12 @@ function buildEmail({ vehicle, previousBucket, nextBucket, actorUser }) {
   return { subject, text: body };
 }
 
-function buildRecipientUsers({ usersById, recipientRules, vehicle }) {
-  const recipientIds = new Set(recipientRules.map((rule) => rule.user_id));
+function buildSms({ vehicle, previousBucket, nextBucket }) {
+  return `Get Ready: ${vehicle.stock_number} moved from ${previousBucket} to ${nextBucket}. ${vehicle.year} ${vehicle.make} ${vehicle.model}.`;
+}
+
+function buildEmailRecipientUsers({ usersById, recipientRules, vehicle }) {
+  const recipientIds = new Set(recipientRules.filter((rule) => rule.email_enabled).map((rule) => rule.user_id));
 
   if (vehicle.submitted_by_user_id) {
     recipientIds.add(vehicle.submitted_by_user_id);
@@ -77,6 +101,18 @@ function buildRecipientUsers({ usersById, recipientRules, vehicle }) {
   return [...recipientIds]
     .map((userId) => usersById.get(userId))
     .filter((user) => user?.is_active && user.email);
+}
+
+function buildSmsRecipientUsers({ usersById, recipientRules, vehicle }) {
+  const recipientIds = new Set(recipientRules.filter((rule) => rule.sms_enabled).map((rule) => rule.user_id));
+
+  if (vehicle.submitted_by_user_id) {
+    recipientIds.add(vehicle.submitted_by_user_id);
+  }
+
+  return [...recipientIds]
+    .map((userId) => usersById.get(userId))
+    .filter((user) => user?.is_active && user.sms_enabled && user.mobile_phone);
 }
 
 async function recordDelivery(delivery) {
@@ -99,7 +135,7 @@ export async function sendBucketNotifications({ previousVehicle, nextVehicle, ac
   }
 
   const summary = {
-    channel: "email",
+    channel: "notification",
     previous_bucket: previousBucket,
     bucket: nextBucket,
     sent: [],
@@ -108,13 +144,7 @@ export async function sendBucketNotifications({ previousVehicle, nextVehicle, ac
   };
 
   const mailer = getEmailTransporter();
-  if (!mailer) {
-    console.warn("Skipping bucket email notifications because SMTP_HOST and SMTP_FROM are not configured.");
-    return {
-      ...summary,
-      skipped_reason: "smtp_not_configured"
-    };
-  }
+  const texter = getSmsClient();
 
   const [users, rules] = await Promise.all([
     listUsers(),
@@ -122,11 +152,17 @@ export async function sendBucketNotifications({ previousVehicle, nextVehicle, ac
   ]);
   const usersById = new Map(users.map((user) => [user.id, user]));
   const actorUser = actorUserId ? usersById.get(actorUserId) ?? null : null;
-  const recipientRules = rules.filter((rule) => rule.bucket === nextBucket && Boolean(rule.email_enabled));
-  const recipientUsers = buildRecipientUsers({ usersById, recipientRules, vehicle: nextVehicle });
+  const recipientRules = rules.filter((rule) => rule.bucket === nextBucket);
+  const emailRecipientUsers = buildEmailRecipientUsers({ usersById, recipientRules, vehicle: nextVehicle });
+  const smsRecipientUsers = buildSmsRecipientUsers({ usersById, recipientRules, vehicle: nextVehicle });
   const { subject, text } = buildEmail({ vehicle: nextVehicle, previousBucket, nextBucket, actorUser });
+  const smsBody = buildSms({ vehicle: nextVehicle, previousBucket, nextBucket });
 
-  for (const user of recipientUsers) {
+  if (!mailer && emailRecipientUsers.length > 0) {
+    console.warn("Skipping bucket email notifications because SMTP_HOST and SMTP_FROM are not configured.");
+  }
+
+  for (const user of mailer ? emailRecipientUsers : []) {
     const delivery = {
       id: uuid(),
       vehicle_id: nextVehicle.id,
@@ -151,6 +187,7 @@ export async function sendBucketNotifications({ previousVehicle, nextVehicle, ac
         provider_message_id: result.messageId ?? null
       });
       summary.sent.push({
+        channel: "email",
         user_id: user.id,
         name: user.name,
         email: user.email
@@ -163,10 +200,63 @@ export async function sendBucketNotifications({ previousVehicle, nextVehicle, ac
         error_message: error.message || "Email send failed."
       });
       summary.failed.push({
+        channel: "email",
         user_id: user.id,
         name: user.name,
         email: user.email,
         message: error.message || "Email send failed."
+      });
+    }
+  }
+
+  if (!texter && smsRecipientUsers.length > 0) {
+    console.warn("Skipping bucket SMS notifications because Twilio environment variables are not configured.");
+  }
+
+  for (const user of texter ? smsRecipientUsers : []) {
+    const delivery = {
+      id: uuid(),
+      vehicle_id: nextVehicle.id,
+      user_id: user.id,
+      bucket: nextBucket,
+      channel: "sms",
+      recipient: user.mobile_phone,
+      status: "pending"
+    };
+
+    try {
+      const result = await texter.messages.create({
+        to: user.mobile_phone,
+        body: smsBody,
+        ...(process.env.TWILIO_MESSAGING_SERVICE_SID
+          ? { messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID }
+          : { from: process.env.TWILIO_FROM_NUMBER })
+      });
+
+      await recordDelivery({
+        ...delivery,
+        status: "sent",
+        provider_message_id: result.sid ?? null
+      });
+      summary.sent.push({
+        channel: "sms",
+        user_id: user.id,
+        name: user.name,
+        mobile_phone: user.mobile_phone
+      });
+    } catch (error) {
+      console.error(`Failed to text bucket notification to ${user.mobile_phone}`, error);
+      await recordDelivery({
+        ...delivery,
+        status: "failed",
+        error_message: error.message || "SMS send failed."
+      });
+      summary.failed.push({
+        channel: "sms",
+        user_id: user.id,
+        name: user.name,
+        mobile_phone: user.mobile_phone,
+        message: error.message || "SMS send failed."
       });
     }
   }

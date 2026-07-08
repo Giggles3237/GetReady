@@ -18,6 +18,8 @@ export function sanitizeUser(user) {
     id: user.id,
     name: user.name,
     email: user.email,
+    mobile_phone: user.mobile_phone ?? "",
+    sms_enabled: Boolean(user.sms_enabled),
     role: user.role,
     must_change_password: false,
     is_active: Boolean(user.is_active),

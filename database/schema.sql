@@ -2,6 +2,8 @@ CREATE TABLE users (
   id VARCHAR(36) PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
   email VARCHAR(191) NOT NULL UNIQUE,
+  mobile_phone VARCHAR(30) NULL,
+  sms_enabled BOOLEAN NOT NULL DEFAULT FALSE,
   role ENUM('admin', 'salesperson', 'manager', 'bmw_genius', 'detailer', 'service_advisor') NOT NULL,
   password_hash VARCHAR(255) NULL,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE,

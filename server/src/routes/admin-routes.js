@@ -20,20 +20,53 @@ import { decorateAuditEntry, normalizeActionDefinition, normalizeVehicle, saniti
 const notificationBuckets = [...new Set(Object.values(STATUS_META).map((meta) => meta.pipeline))];
 
 function normalizeNotificationRules(rows) {
-  const rulesByBucket = new Map(notificationBuckets.map((bucket) => [bucket, []]));
+  const rulesByBucket = new Map(notificationBuckets.map((bucket) => [bucket, { email_user_ids: [], sms_user_ids: [] }]));
 
   rows.forEach((row) => {
-    if (!rulesByBucket.has(row.bucket) || !row.email_enabled) {
+    if (!rulesByBucket.has(row.bucket)) {
       return;
     }
 
-    rulesByBucket.get(row.bucket).push(row.user_id);
+    if (row.email_enabled) {
+      rulesByBucket.get(row.bucket).email_user_ids.push(row.user_id);
+    }
+
+    if (row.sms_enabled) {
+      rulesByBucket.get(row.bucket).sms_user_ids.push(row.user_id);
+    }
   });
 
-  return notificationBuckets.map((bucket) => ({
-    bucket,
-    user_ids: rulesByBucket.get(bucket) ?? []
-  }));
+  return notificationBuckets.map((bucket) => {
+    const rule = rulesByBucket.get(bucket) ?? { email_user_ids: [], sms_user_ids: [] };
+    return {
+      bucket,
+      user_ids: rule.email_user_ids,
+      email_user_ids: rule.email_user_ids,
+      sms_user_ids: rule.sms_user_ids
+    };
+  });
+}
+
+function normalizeMobilePhone(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 10) {
+    return `+1${digits}`;
+  }
+
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return `+${digits}`;
+  }
+
+  if (raw.startsWith("+") && digits.length >= 8) {
+    return `+${digits}`;
+  }
+
+  return raw;
 }
 
 export function registerAdminRoutes(app, {
@@ -42,6 +75,8 @@ export function registerAdminRoutes(app, {
 }) {
   app.post("/api/admin/users", requireAdmin, asyncHandler(async (req, res) => {
     const { name, email, role } = req.body;
+    const mobilePhone = normalizeMobilePhone(req.body.mobile_phone);
+    const smsEnabled = Boolean(req.body.sms_enabled) && Boolean(mobilePhone);
 
     if (!name || !email || !role || !ROLE_LABELS[role]) {
       return res.status(400).json({ message: "Name, email, and valid role are required." });
@@ -56,6 +91,8 @@ export function registerAdminRoutes(app, {
       id: uuid(),
       name: String(name).trim(),
       email: String(email).trim().toLowerCase(),
+      mobile_phone: mobilePhone,
+      sms_enabled: smsEnabled,
       role,
       password_hash: "",
       must_change_password: false,
@@ -90,7 +127,7 @@ export function registerAdminRoutes(app, {
   }));
 
   app.patch("/api/admin/users/:id", requireAdmin, asyncHandler(async (req, res) => {
-    const { name, email, role, is_active } = req.body;
+    const { name, email, role, is_active, sms_enabled } = req.body;
     const targetUser = await getUser(req.params.id);
 
     if (!targetUser) {
@@ -129,6 +166,45 @@ export function registerAdminRoutes(app, {
           newValue: email.trim().toLowerCase()
         });
         nextUser.email = email.trim().toLowerCase();
+      }
+
+      if (Object.prototype.hasOwnProperty.call(req.body, "mobile_phone")) {
+        const nextMobilePhone = normalizeMobilePhone(req.body.mobile_phone);
+        if (String(targetUser.mobile_phone ?? "") !== nextMobilePhone) {
+          await addAuditEntry(connection, {
+            userId: req.currentUser.id,
+            actionType: "admin_user_update",
+            fieldChanged: `user:${targetUser.id}:mobile_phone`,
+            oldValue: targetUser.mobile_phone ?? "",
+            newValue: nextMobilePhone
+          });
+          nextUser.mobile_phone = nextMobilePhone;
+
+          if (!nextMobilePhone && Boolean(nextUser.sms_enabled)) {
+            await addAuditEntry(connection, {
+              userId: req.currentUser.id,
+              actionType: "admin_user_update",
+              fieldChanged: `user:${targetUser.id}:sms_enabled`,
+              oldValue: nextUser.sms_enabled,
+              newValue: false
+            });
+            nextUser.sms_enabled = false;
+          }
+        }
+      }
+
+      if (typeof sms_enabled === "boolean") {
+        const nextSmsEnabled = sms_enabled && Boolean(nextUser.mobile_phone || targetUser.mobile_phone);
+        if (Boolean(targetUser.sms_enabled) !== nextSmsEnabled) {
+          await addAuditEntry(connection, {
+            userId: req.currentUser.id,
+            actionType: "admin_user_update",
+            fieldChanged: `user:${targetUser.id}:sms_enabled`,
+            oldValue: targetUser.sms_enabled,
+            newValue: nextSmsEnabled
+          });
+          nextUser.sms_enabled = nextSmsEnabled;
+        }
       }
 
       if (typeof role === "string" && ROLE_LABELS[role] && targetUser.role !== role) {
@@ -249,22 +325,29 @@ export function registerAdminRoutes(app, {
       return res.status(404).json({ message: "Notification bucket not found." });
     }
 
-    const requestedUserIds = Array.isArray(req.body.user_ids) ? req.body.user_ids.map(String) : [];
+    const requestedEmailUserIds = Array.isArray(req.body.email_user_ids)
+      ? req.body.email_user_ids.map(String)
+      : Array.isArray(req.body.user_ids)
+        ? req.body.user_ids.map(String)
+        : [];
+    const requestedSmsUserIds = Array.isArray(req.body.sms_user_ids) ? req.body.sms_user_ids.map(String) : [];
     const users = await listUsers();
     const validUserIds = new Set(users.filter((user) => user.is_active).map((user) => user.id));
-    const userIds = [...new Set(requestedUserIds)].filter((userId) => validUserIds.has(userId));
+    const smsCapableUserIds = new Set(users.filter((user) => user.is_active && user.sms_enabled && user.mobile_phone).map((user) => user.id));
+    const emailUserIds = [...new Set(requestedEmailUserIds)].filter((userId) => validUserIds.has(userId));
+    const smsUserIds = [...new Set(requestedSmsUserIds)].filter((userId) => smsCapableUserIds.has(userId));
     const pool = getPool();
     const connection = await pool.getConnection();
 
     try {
       await connection.beginTransaction();
-      await replaceNotificationRulesForBucket(connection, bucket, userIds);
+      await replaceNotificationRulesForBucket(connection, bucket, { emailUserIds, smsUserIds });
       await addAuditEntry(connection, {
         userId: req.currentUser.id,
         actionType: "admin_notification_update",
-        fieldChanged: `notification:${bucket}:email_recipients`,
+        fieldChanged: `notification:${bucket}:recipients`,
         oldValue: "",
-        newValue: userIds.join(",")
+        newValue: `email:${emailUserIds.join(",")};sms:${smsUserIds.join(",")}`
       });
       await connection.commit();
     } catch (error) {
