@@ -67,6 +67,18 @@ function buildEmail({ vehicle, previousBucket, nextBucket, actorUser }) {
   return { subject, text: body };
 }
 
+function buildRecipientUsers({ usersById, recipientRules, vehicle }) {
+  const recipientIds = new Set(recipientRules.map((rule) => rule.user_id));
+
+  if (vehicle.submitted_by_user_id) {
+    recipientIds.add(vehicle.submitted_by_user_id);
+  }
+
+  return [...recipientIds]
+    .map((userId) => usersById.get(userId))
+    .filter((user) => user?.is_active && user.email);
+}
+
 async function recordDelivery(delivery) {
   const pool = getPool();
   const connection = await pool.getConnection();
@@ -111,14 +123,10 @@ export async function sendBucketNotifications({ previousVehicle, nextVehicle, ac
   const usersById = new Map(users.map((user) => [user.id, user]));
   const actorUser = actorUserId ? usersById.get(actorUserId) ?? null : null;
   const recipientRules = rules.filter((rule) => rule.bucket === nextBucket && Boolean(rule.email_enabled));
+  const recipientUsers = buildRecipientUsers({ usersById, recipientRules, vehicle: nextVehicle });
   const { subject, text } = buildEmail({ vehicle: nextVehicle, previousBucket, nextBucket, actorUser });
 
-  for (const rule of recipientRules) {
-    const user = usersById.get(rule.user_id);
-    if (!user?.is_active || !user.email) {
-      continue;
-    }
-
+  for (const user of recipientUsers) {
     const delivery = {
       id: uuid(),
       vehicle_id: nextVehicle.id,
