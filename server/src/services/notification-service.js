@@ -83,13 +83,25 @@ export async function sendBucketNotifications({ previousVehicle, nextVehicle, ac
   const nextBucket = getPipelineColumn(nextVehicle);
 
   if (previousBucket === nextBucket) {
-    return;
+    return null;
   }
+
+  const summary = {
+    channel: "email",
+    previous_bucket: previousBucket,
+    bucket: nextBucket,
+    sent: [],
+    failed: [],
+    skipped_reason: null
+  };
 
   const mailer = getEmailTransporter();
   if (!mailer) {
     console.warn("Skipping bucket email notifications because SMTP_HOST and SMTP_FROM are not configured.");
-    return;
+    return {
+      ...summary,
+      skipped_reason: "smtp_not_configured"
+    };
   }
 
   const [users, rules] = await Promise.all([
@@ -130,6 +142,11 @@ export async function sendBucketNotifications({ previousVehicle, nextVehicle, ac
         status: "sent",
         provider_message_id: result.messageId ?? null
       });
+      summary.sent.push({
+        user_id: user.id,
+        name: user.name,
+        email: user.email
+      });
     } catch (error) {
       console.error(`Failed to email bucket notification to ${user.email}`, error);
       await recordDelivery({
@@ -137,6 +154,21 @@ export async function sendBucketNotifications({ previousVehicle, nextVehicle, ac
         status: "failed",
         error_message: error.message || "Email send failed."
       });
+      summary.failed.push({
+        user_id: user.id,
+        name: user.name,
+        email: user.email,
+        message: error.message || "Email send failed."
+      });
     }
   }
+
+  if (summary.sent.length === 0 && summary.failed.length === 0) {
+    return {
+      ...summary,
+      skipped_reason: "no_recipients"
+    };
+  }
+
+  return summary;
 }

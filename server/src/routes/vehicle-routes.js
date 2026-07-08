@@ -246,7 +246,7 @@ export function registerVehicleRoutes(app, {
       return res.status(400).json({ message: "This vehicle has already been archived." });
     }
 
-    const nextVehicle = await updateVehicleWithAudit(
+    const result = await updateVehicleWithAudit(
       vehicle.id,
       {
         is_archived: true,
@@ -256,7 +256,7 @@ export function registerVehicleRoutes(app, {
       "vehicle_archived"
     );
 
-    res.json({ vehicle: nextVehicle });
+    res.json({ vehicle: result.vehicle, notification: result.notification });
   }));
 
   app.patch("/api/vehicles/:id/unarchive", requireAdmin, asyncHandler(async (req, res) => {
@@ -271,7 +271,7 @@ export function registerVehicleRoutes(app, {
       return res.status(400).json({ message: "This vehicle is not archived." });
     }
 
-    const nextVehicle = await updateVehicleWithAudit(
+    const result = await updateVehicleWithAudit(
       vehicle.id,
       {
         is_archived: false,
@@ -281,7 +281,7 @@ export function registerVehicleRoutes(app, {
       "vehicle_unarchived"
     );
 
-    res.json({ vehicle: nextVehicle });
+    res.json({ vehicle: result.vehicle, notification: result.notification });
   }));
 
   app.post("/api/vehicles", asyncHandler(async (req, res) => {
@@ -317,7 +317,7 @@ export function registerVehicleRoutes(app, {
       return res.status(400).json({ message: transition.message, blockers: transition.blockers ?? [] });
     }
 
-    const nextVehicle = await updateVehicleWithAudit(
+    const result = await updateVehicleWithAudit(
       vehicle.id,
       {
         status,
@@ -328,7 +328,7 @@ export function registerVehicleRoutes(app, {
       "status_change"
     );
 
-    res.json({ vehicle: nextVehicle });
+    res.json({ vehicle: result.vehicle, notification: result.notification });
   }));
 
   app.patch("/api/vehicles/:id/corrections", requireManager, asyncHandler(async (req, res) => {
@@ -342,8 +342,8 @@ export function registerVehicleRoutes(app, {
 
     try {
       const normalized = normalizeManagerCorrections(req.body, vehicle);
-      const nextVehicle = await updateVehicleWithAudit(vehicle.id, normalized, req.currentUser.id, "manager_correction");
-      res.json({ vehicle: nextVehicle });
+      const result = await updateVehicleWithAudit(vehicle.id, normalized, req.currentUser.id, "manager_correction");
+      res.json({ vehicle: result.vehicle, notification: result.notification });
     } catch (error) {
       return res.status(error.statusCode || 400).json({ message: error.message || "Unable to save corrections." });
     }
@@ -367,7 +367,7 @@ export function registerVehicleRoutes(app, {
     }
 
     const vehicle = normalizeVehicle(vehicleRow);
-    const nextVehicle = await updateVehicleWithAudit(
+    const result = await updateVehicleWithAudit(
       vehicle.id,
       {
         due_date: nextDueDate.toISOString()
@@ -376,7 +376,7 @@ export function registerVehicleRoutes(app, {
       "due_date_update"
     );
 
-    res.json({ vehicle: nextVehicle });
+    res.json({ vehicle: result.vehicle, notification: result.notification });
   }));
 
   app.patch("/api/vehicles/:id/flags", asyncHandler(async (req, res) => {
@@ -427,7 +427,7 @@ export function registerVehicleRoutes(app, {
       normalized.status = STATUS.QC;
     }
 
-    const nextVehicle = await updateVehicleWithAudit(vehicle.id, normalized, req.currentUser.id, "flag_update");
-    res.json({ vehicle: nextVehicle });
+    const result = await updateVehicleWithAudit(vehicle.id, normalized, req.currentUser.id, "flag_update");
+    res.json({ vehicle: result.vehicle, notification: result.notification });
   }));
 }

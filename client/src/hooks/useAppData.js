@@ -39,6 +39,24 @@ function createEmptySubmission(userId = "") {
   };
 }
 
+function buildNotificationNotice(notification) {
+  if (!notification?.sent?.length) {
+    return null;
+  }
+
+  const recipientNames = notification.sent.map((recipient) => recipient.name || recipient.email).join(", ");
+  const failedCount = notification.failed?.length ?? 0;
+
+  return {
+    title: notification.sent.length === 1 ? "Email Notification Sent" : "Email Notifications Sent",
+    message: [
+      `${notification.sent.length} email${notification.sent.length === 1 ? "" : "s"} sent for ${notification.bucket}.`,
+      recipientNames ? `Recipients: ${recipientNames}.` : "",
+      failedCount > 0 ? `${failedCount} email${failedCount === 1 ? "" : "s"} failed. Check server logs for details.` : ""
+    ].filter(Boolean).join(" ")
+  };
+}
+
 export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
   const [users, setUsers] = useState([]);
   const [vehicles, setVehicles] = useState([]);
@@ -228,31 +246,41 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     await openVehicle(vehicleId);
   }
 
+  function showNotificationNotice(notification) {
+    const notice = buildNotificationNotice(notification);
+    if (notice) {
+      setArchiveNotice(notice);
+    }
+  }
+
   async function updateStatus(vehicleId, status) {
     setError("");
-    await request(`/vehicles/${vehicleId}/status`, {
+    const data = await request(`/vehicles/${vehicleId}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status })
     });
     await refreshVehicleAndDashboard(vehicleId);
+    showNotificationNotice(data.notification);
   }
 
   async function updateFlags(vehicleId, changes) {
     setError("");
-    await request(`/vehicles/${vehicleId}/flags`, {
+    const data = await request(`/vehicles/${vehicleId}/flags`, {
       method: "PATCH",
       body: JSON.stringify(changes)
     });
     await refreshVehicleAndDashboard(vehicleId);
+    showNotificationNotice(data.notification);
   }
 
   async function saveManagerCorrections(vehicleId, changes) {
     setError("");
-    await request(`/vehicles/${vehicleId}/corrections`, {
+    const data = await request(`/vehicles/${vehicleId}/corrections`, {
       method: "PATCH",
       body: JSON.stringify(changes)
     });
     await refreshVehicleAndDashboard(vehicleId);
+    showNotificationNotice(data.notification);
   }
 
   async function updateVehicleDueDate(vehicleId) {

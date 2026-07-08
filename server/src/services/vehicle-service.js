@@ -352,15 +352,26 @@ export async function updateVehicleWithAudit(vehicleId, changes, userId, actionT
     await replaceVehicle(connection, currentVehicle);
     await connection.commit();
 
-    sendBucketNotifications({
-      previousVehicle,
-      nextVehicle: currentVehicle,
-      actorUserId: userId
-    }).catch((error) => {
+    let notification = null;
+    try {
+      notification = await sendBucketNotifications({
+        previousVehicle,
+        nextVehicle: currentVehicle,
+        actorUserId: userId
+      });
+    } catch (error) {
       console.error("Bucket notification processing failed", error);
-    });
+      notification = {
+        channel: "email",
+        previous_bucket: null,
+        bucket: null,
+        sent: [],
+        failed: [{ message: error.message || "Notification processing failed." }],
+        skipped_reason: "processing_failed"
+      };
+    }
 
-    return currentVehicle;
+    return { vehicle: currentVehicle, notification };
   } catch (error) {
     await connection.rollback();
     throw error;
