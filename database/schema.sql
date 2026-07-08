@@ -68,6 +68,32 @@ CREATE TABLE audit_logs (
   CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+CREATE TABLE notification_rules (
+  bucket VARCHAR(80) NOT NULL,
+  user_id VARCHAR(36) NOT NULL,
+  email_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  sms_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (bucket, user_id),
+  CONSTRAINT fk_notification_rule_user FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE notification_deliveries (
+  id VARCHAR(36) PRIMARY KEY,
+  vehicle_id VARCHAR(36) NOT NULL,
+  user_id VARCHAR(36) NOT NULL,
+  bucket VARCHAR(80) NOT NULL,
+  channel ENUM('email', 'sms') NOT NULL,
+  recipient VARCHAR(191) NOT NULL,
+  status ENUM('sent', 'failed', 'pending') NOT NULL,
+  provider_message_id VARCHAR(191) NULL,
+  error_message TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_notification_delivery_vehicle FOREIGN KEY (vehicle_id) REFERENCES vehicles(id),
+  CONSTRAINT fk_notification_delivery_user FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
 CREATE TABLE user_sessions (
   session_id VARCHAR(191) PRIMARY KEY,
   expires_at DATETIME NOT NULL,
@@ -88,4 +114,7 @@ CREATE INDEX idx_vehicle_assigned_user ON vehicles(assigned_user_id);
 CREATE INDEX idx_audit_vehicle_created ON audit_logs(vehicle_id, created_at);
 CREATE INDEX idx_audit_user_created ON audit_logs(user_id, created_at);
 CREATE INDEX idx_audit_action_created ON audit_logs(action_type, created_at);
+CREATE INDEX idx_notification_rules_bucket ON notification_rules(bucket);
+CREATE INDEX idx_notification_deliveries_vehicle ON notification_deliveries(vehicle_id, created_at);
+CREATE INDEX idx_notification_deliveries_user ON notification_deliveries(user_id, created_at);
 CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);

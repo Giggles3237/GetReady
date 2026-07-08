@@ -7,6 +7,9 @@ export default function AdminTab({
   adminActions,
   updateAdminAction,
   setAdminActions,
+  notificationRules,
+  notificationBuckets,
+  updateNotificationRule,
   roleOptions,
   showInactiveUsers,
   setShowInactiveUsers,
@@ -24,6 +27,8 @@ export default function AdminTab({
   unarchiveVehicle,
   auditFeed
 }) {
+  const activeUsers = visibleManagedUsers.filter((user) => user.is_active);
+
   return (
     <section className="panel">
       <div className="section-heading">
@@ -39,6 +44,7 @@ export default function AdminTab({
         <button type="button" className={`tab-btn ${adminSection === "archived" ? "active" : ""}`} onClick={() => setAdminSection("archived")}>Archived Units</button>
         <button type="button" className={`tab-btn ${adminSection === "audit" ? "active" : ""}`} onClick={() => setAdminSection("audit")}>Audit</button>
         <button type="button" className={`tab-btn ${adminSection === "steps" ? "active" : ""}`} onClick={() => setAdminSection("steps")}>Step Labels</button>
+        <button type="button" className={`tab-btn ${adminSection === "notifications" ? "active" : ""}`} onClick={() => setAdminSection("notifications")}>Notifications</button>
       </div>
 
       {adminSection === "steps" ? (
@@ -69,6 +75,50 @@ export default function AdminTab({
               <p className="admin-meta">Type: {action.type}</p>
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {adminSection === "notifications" ? (
+        <div className="admin-list">
+          <div className="empty-inline">
+            Email alerts are sent when a unit moves into a new bucket. SMTP must be configured on the server before messages are delivered.
+          </div>
+
+          {notificationBuckets.map((bucket) => {
+            const rule = notificationRules.find((item) => item.bucket === bucket);
+            const selectedUserIds = rule?.user_ids ?? [];
+
+            return (
+              <div key={bucket} className="admin-card">
+                <div className="admin-card-head">
+                  <div>
+                    <strong>{bucket}</strong>
+                    <p className="admin-meta">{selectedUserIds.length} email recipient{selectedUserIds.length === 1 ? "" : "s"}</p>
+                  </div>
+                </div>
+                <div className="notification-user-grid">
+                  {activeUsers.map((managedUser) => (
+                    <label key={`${bucket}-${managedUser.id}`} className="toggle-line notification-user-row">
+                      <input
+                        type="checkbox"
+                        checked={selectedUserIds.includes(managedUser.id)}
+                        onChange={(event) => {
+                          const nextUserIds = event.target.checked
+                            ? [...selectedUserIds, managedUser.id]
+                            : selectedUserIds.filter((userId) => userId !== managedUser.id);
+                          updateNotificationRule(bucket, nextUserIds);
+                        }}
+                      />
+                      <span>
+                        <strong>{managedUser.name}</strong>
+                        <small>{managedUser.email}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </div>
       ) : null}
 

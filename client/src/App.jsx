@@ -76,6 +76,8 @@ export default function App() {
     setSuccessMessage,
     adminActions,
     setAdminActions,
+    notificationRules,
+    notificationBuckets,
     auditFeed,
     archivedVehicles,
     reportsOverview,
@@ -102,6 +104,7 @@ export default function App() {
     loadAdminData,
     loadReports,
     updateAdminAction,
+    updateNotificationRule,
     createAdminUser,
     updateAdminUser,
     grouped,
@@ -290,6 +293,9 @@ export default function App() {
             adminActions={adminActions}
             updateAdminAction={(actionKey, changes) => updateAdminAction(actionKey, changes).catch((err) => setError(err.message))}
             setAdminActions={setAdminActions}
+            notificationRules={notificationRules}
+            notificationBuckets={notificationBuckets}
+            updateNotificationRule={(bucket, userIds) => updateNotificationRule(bucket, userIds).catch((err) => setError(err.message))}
             roleOptions={roleOptions}
             showInactiveUsers={showInactiveUsers}
             setShowInactiveUsers={setShowInactiveUsers}

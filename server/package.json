@@ -9,6 +9,7 @@
     "seed:demo": "node scripts/seed-demo.js",
     "migrate:auth": "node scripts/migrate-auth.js",
     "migrate:admin-role": "node scripts/migrate-admin-role.js",
+    "migrate:notifications": "node scripts/migrate-notifications.js",
     "migrate:vehicle-archive": "node scripts/migrate-vehicle-archive.js",
     "migrate:stock-duplicates": "node scripts/migrate-stock-number-duplicates.js",
     "reset:all-passwords": "node scripts/reset-all-passwords.js"
@@ -18,6 +19,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "mysql2": "^3.11.3",
+    "nodemailer": "^9.0.3",
     "uuid": "^11.0.3"
   }
 }

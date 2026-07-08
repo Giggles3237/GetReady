@@ -7,13 +7,34 @@ import {
   getUserByEmail,
   listActionDefinitions,
   listAuditEntries,
+  listNotificationRules,
   listUsers,
   listVehicles,
+  replaceNotificationRulesForBucket,
   updateActionDefinition,
   updateUser
 } from "../db.js";
-import { ROLE_LABELS } from "../workflow.js";
+import { ROLE_LABELS, STATUS_META } from "../workflow.js";
 import { decorateAuditEntry, normalizeActionDefinition, normalizeVehicle, sanitizeUser } from "../vehicle-helpers.js";
+
+const notificationBuckets = [...new Set(Object.values(STATUS_META).map((meta) => meta.pipeline))];
+
+function normalizeNotificationRules(rows) {
+  const rulesByBucket = new Map(notificationBuckets.map((bucket) => [bucket, []]));
+
+  rows.forEach((row) => {
+    if (!rulesByBucket.has(row.bucket) || !row.email_enabled) {
+      return;
+    }
+
+    rulesByBucket.get(row.bucket).push(row.user_id);
+  });
+
+  return notificationBuckets.map((bucket) => ({
+    bucket,
+    user_ids: rulesByBucket.get(bucket) ?? []
+  }));
+}
 
 export function registerAdminRoutes(app, {
   requireAdmin,
@@ -212,6 +233,51 @@ export function registerAdminRoutes(app, {
     }
 
     res.json({ actions: (await listActionDefinitions()).map(normalizeActionDefinition) });
+  }));
+
+  app.get("/api/admin/notifications", requireAdmin, asyncHandler(async (_req, res) => {
+    const rules = await listNotificationRules();
+    res.json({
+      buckets: notificationBuckets,
+      rules: normalizeNotificationRules(rules)
+    });
+  }));
+
+  app.patch("/api/admin/notifications/:bucket", requireAdmin, asyncHandler(async (req, res) => {
+    const bucket = req.params.bucket;
+    if (!notificationBuckets.includes(bucket)) {
+      return res.status(404).json({ message: "Notification bucket not found." });
+    }
+
+    const requestedUserIds = Array.isArray(req.body.user_ids) ? req.body.user_ids.map(String) : [];
+    const users = await listUsers();
+    const validUserIds = new Set(users.filter((user) => user.is_active).map((user) => user.id));
+    const userIds = [...new Set(requestedUserIds)].filter((userId) => validUserIds.has(userId));
+    const pool = getPool();
+    const connection = await pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+      await replaceNotificationRulesForBucket(connection, bucket, userIds);
+      await addAuditEntry(connection, {
+        userId: req.currentUser.id,
+        actionType: "admin_notification_update",
+        fieldChanged: `notification:${bucket}:email_recipients`,
+        oldValue: "",
+        newValue: userIds.join(",")
+      });
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    res.json({
+      buckets: notificationBuckets,
+      rules: normalizeNotificationRules(await listNotificationRules())
+    });
   }));
 
   app.get("/api/admin/audit", requireAdmin, asyncHandler(async (req, res) => {

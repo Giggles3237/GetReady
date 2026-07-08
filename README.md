@@ -135,6 +135,23 @@ Required Render environment variables:
 - `AUTH_TOKEN_TTL_DAYS` optional, defaults to `90`
 - `BOPCHIPBOARD_API_KEY`
 - `PORT=4000`
+- `SMTP_HOST` and `SMTP_FROM` to enable email bucket notifications
+- `SMTP_PORT` optional, defaults to `587`
+- `SMTP_SECURE=true` optional for SMTP providers that require TLS on connect
+- `SMTP_USER` and `SMTP_PASSWORD` optional, depending on the SMTP provider
+
+Gmail SMTP example:
+
+```bash
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-gmail-address@gmail.com
+SMTP_PASSWORD=your-16-character-google-app-password
+SMTP_FROM="BMW Get Ready <your-gmail-address@gmail.com>"
+```
+
+For Gmail, use a Google app password instead of the normal mailbox password. Google requires 2-Step Verification before app passwords can be created.
 
 ### Vercel frontend
 
@@ -211,6 +228,7 @@ Before deploying:
 
 ```bash
 cd server
+npm run migrate:notifications
 npm start
 ```
 

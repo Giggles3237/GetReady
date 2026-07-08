@@ -2,6 +2,7 @@ import { v4 as uuid } from "uuid";
 import { getPool, getVehicle, insertVehicle, listUsers, replaceVehicle } from "../db.js";
 import { STATUS, deriveAssignedRole, syncWorkflowState } from "../workflow.js";
 import { inferLocation, normalizeVehicle } from "../vehicle-helpers.js";
+import { sendBucketNotifications } from "./notification-service.js";
 
 function buildDueDateFromParts(dateValue, timeValue = "14:00") {
   if (!dateValue) {
@@ -317,6 +318,8 @@ export async function updateVehicleWithAudit(vehicleId, changes, userId, actionT
       throw Object.assign(new Error("Vehicle not found."), { statusCode: 404 });
     }
 
+    const previousVehicle = { ...currentVehicle };
+
     for (const [field, newValue] of Object.entries(changes)) {
       const oldValue = currentVehicle[field];
       if (String(oldValue ?? "") !== String(newValue ?? "")) {
@@ -348,6 +351,14 @@ export async function updateVehicleWithAudit(vehicleId, changes, userId, actionT
 
     await replaceVehicle(connection, currentVehicle);
     await connection.commit();
+
+    sendBucketNotifications({
+      previousVehicle,
+      nextVehicle: currentVehicle,
+      actorUserId: userId
+    }).catch((error) => {
+      console.error("Bucket notification processing failed", error);
+    });
 
     return currentVehicle;
   } catch (error) {

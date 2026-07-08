@@ -125,6 +125,29 @@ export async function updateActionDefinition(connection, action) {
   );
 }
 
+export async function listNotificationRules(connection = null) {
+  return runQuery(
+    `SELECT bucket, user_id, email_enabled, sms_enabled
+     FROM notification_rules
+     ORDER BY bucket ASC, user_id ASC`,
+    [],
+    connection
+  );
+}
+
+export async function replaceNotificationRulesForBucket(connection, bucket, userIds) {
+  await runQuery("DELETE FROM notification_rules WHERE bucket = ?", [bucket], connection);
+
+  for (const userId of userIds) {
+    await runQuery(
+      `INSERT INTO notification_rules (bucket, user_id, email_enabled, sms_enabled)
+       VALUES (?, ?, TRUE, FALSE)`,
+      [bucket, userId],
+      connection
+    );
+  }
+}
+
 const vehicleColumns = `
   id, stock_number, year, make, model, color, status, due_date, current_location, assigned_role,
   assigned_user_id, submitted_by_user_id, needs_service, needs_bodywork, recall_checked, recall_open,
@@ -257,6 +280,26 @@ export async function listAuditEntries({ userId = null, vehicleId = null, limit 
      ORDER BY created_at DESC
      LIMIT ?`,
     params,
+    connection
+  );
+}
+
+export async function insertNotificationDelivery(connection, delivery) {
+  await runQuery(
+    `INSERT INTO notification_deliveries (
+      id, vehicle_id, user_id, bucket, channel, recipient, status, provider_message_id, error_message
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      delivery.id,
+      delivery.vehicle_id,
+      delivery.user_id,
+      delivery.bucket,
+      delivery.channel,
+      delivery.recipient,
+      delivery.status,
+      delivery.provider_message_id ?? null,
+      delivery.error_message ?? null
+    ],
     connection
   );
 }

@@ -961,6 +961,30 @@ select {
   border-bottom: 1px solid var(--line);
 }
 
+.notification-user-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.notification-user-row {
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  background: rgba(17, 24, 32, 0.03);
+  padding: 10px;
+}
+
+.notification-user-row span {
+  display: grid;
+  gap: 2px;
+}
+
+.notification-user-row small {
+  color: var(--muted);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
 .user-list {
   display: grid;
   gap: 0;

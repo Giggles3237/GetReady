@@ -57,6 +57,8 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
   const [dueDateEdit, setDueDateEdit] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [adminActions, setAdminActions] = useState([]);
+  const [notificationRules, setNotificationRules] = useState([]);
+  const [notificationBuckets, setNotificationBuckets] = useState([]);
   const [auditFeed, setAuditFeed] = useState([]);
   const [archivedVehicles, setArchivedVehicles] = useState([]);
   const [reportsOverview, setReportsOverview] = useState(null);
@@ -115,15 +117,18 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     }
 
     setError("");
-    const [userData, actionData, auditData, archivedData] = await Promise.all([
+    const [userData, actionData, notificationData, auditData, archivedData] = await Promise.all([
       request("/users"),
       request("/admin/actions"),
+      request("/admin/notifications"),
       request("/admin/audit?limit=150"),
       request("/vehicles?role=admin&include_archived=true")
     ]);
 
     setUsers(userData.users);
     setAdminActions(actionData.actions);
+    setNotificationBuckets(notificationData.buckets);
+    setNotificationRules(notificationData.rules);
     setAuditFeed(auditData.audit);
     setArchivedVehicles(archivedData.vehicles.filter((vehicle) => vehicle.is_archived));
   }
@@ -324,6 +329,15 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     await loadDashboard();
   }
 
+  async function updateNotificationRule(bucket, userIds) {
+    const data = await request(`/admin/notifications/${encodeURIComponent(bucket)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ user_ids: userIds })
+    });
+    setNotificationBuckets(data.buckets);
+    setNotificationRules(data.rules);
+  }
+
   async function createAdminUser(event) {
     event.preventDefault();
 
@@ -453,6 +467,8 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     setSummary(null);
     setSelectedVehicle(null);
     setAdminActions([]);
+    setNotificationRules([]);
+    setNotificationBuckets([]);
     setAuditFeed([]);
     setReportsOverview(null);
     setSuccessMessage("");
@@ -493,6 +509,8 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     setSuccessMessage,
     adminActions,
     setAdminActions,
+    notificationRules,
+    notificationBuckets,
     auditFeed,
     archivedVehicles,
     reportsOverview,
@@ -519,6 +537,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     loadAdminData,
     loadReports,
     updateAdminAction,
+    updateNotificationRule,
     createAdminUser,
     updateAdminUser,
     grouped,
