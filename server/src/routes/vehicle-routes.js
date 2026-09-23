@@ -2,6 +2,7 @@ import { asyncHandler } from "../async-handler.js";
 import { getVehicle, listActionDefinitions, listAuditEntries, listUsers, listVehicles } from "../db.js";
 import { STATUS, STATUS_META, canTransition, deriveAssignedRole, getPipelineColumn } from "../workflow.js";
 import { shouldShowOnDashboard } from "../services/dashboard-visibility.js";
+import { getBulkStatusDecision, normalizeBulkStatusRequest } from "../services/bulk-status-service.js";
 import {
   decorateAuditEntry,
   decorateVehicle,
@@ -292,6 +293,75 @@ export function registerVehicleRoutes(app, {
     });
 
     res.status(201).json({ vehicle: result.vehicle, warning: result.warning });
+  }));
+
+  app.patch("/api/vehicles/bulk-status", requireManager, asyncHandler(async (req, res) => {
+    const { vehicleIds, status } = normalizeBulkStatusRequest(req.body);
+    const updated = [];
+    const skipped = [];
+    let notificationsSent = 0;
+    let notificationFailures = 0;
+
+    for (const vehicleId of vehicleIds) {
+      const vehicleRow = await getVehicle(vehicleId);
+      if (!vehicleRow) {
+        skipped.push({ id: vehicleId, stock_number: null, reason: "Vehicle not found." });
+        continue;
+      }
+
+      const vehicle = normalizeVehicle(vehicleRow);
+      const decision = getBulkStatusDecision(vehicle, status);
+      if (!decision.allowed) {
+        skipped.push({
+          id: vehicle.id,
+          stock_number: vehicle.stock_number,
+          reason: decision.message,
+          blockers: decision.blockers ?? []
+        });
+        continue;
+      }
+
+      try {
+        const result = await updateVehicleWithAudit(
+          vehicle.id,
+          {
+            status,
+            assigned_user_id: status === STATUS.DETAIL_STARTED ? req.currentUser.id : vehicle.assigned_user_id,
+            assigned_role: STATUS_META[status]?.nextRole ?? deriveAssignedRole(vehicle)
+          },
+          req.currentUser.id,
+          "bulk_status_change"
+        );
+
+        notificationsSent += result.notification?.sent?.length ?? 0;
+        notificationFailures += result.notification?.failed?.length ?? 0;
+        updated.push({
+          id: vehicle.id,
+          stock_number: vehicle.stock_number,
+          previous_status: vehicle.status,
+          status: result.vehicle.status
+        });
+      } catch (error) {
+        skipped.push({
+          id: vehicle.id,
+          stock_number: vehicle.stock_number,
+          reason: error.message || "Update failed."
+        });
+      }
+    }
+
+    res.json({
+      status,
+      updated,
+      skipped,
+      summary: {
+        requested: vehicleIds.length,
+        updated: updated.length,
+        skipped: skipped.length,
+        notifications_sent: notificationsSent,
+        notification_failures: notificationFailures
+      }
+    });
   }));
 
   app.patch("/api/vehicles/:id/status", asyncHandler(async (req, res) => {

@@ -271,6 +271,50 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     showNotificationNotice(data.notification);
   }
 
+  async function bulkUpdateStatus(vehicleIds, status) {
+    setError("");
+    setSuccessMessage("");
+
+    const data = await request("/vehicles/bulk-status", {
+      method: "PATCH",
+      body: JSON.stringify({ vehicle_ids: vehicleIds, status })
+    });
+
+    await loadDashboard();
+
+    if (data.summary.updated > 0) {
+      const notificationCopy = data.summary.notifications_sent > 0
+        ? ` ${data.summary.notifications_sent} notification${data.summary.notifications_sent === 1 ? " was" : "s were"} sent.`
+        : "";
+      setSuccessMessage(
+        `${data.summary.updated} vehicle${data.summary.updated === 1 ? "" : "s"} updated.${notificationCopy}`
+      );
+    }
+
+    if (data.skipped.length > 0 || data.summary.notification_failures > 0) {
+      const skippedDetails = data.skipped
+        .slice(0, 8)
+        .map((item) => `${formatStockNumber(item.stock_number || item.id)}: ${item.reason}`)
+        .join(" ");
+      const remainingCount = Math.max(data.skipped.length - 8, 0);
+      const notificationWarning = data.summary.notification_failures > 0
+        ? ` ${data.summary.notification_failures} notification${data.summary.notification_failures === 1 ? "" : "s"} failed after the status changes were saved.`
+        : "";
+
+      setArchiveNotice({
+        title: "Bulk Update Review",
+        message: [
+          `${data.summary.updated} updated; ${data.summary.skipped} skipped.`,
+          skippedDetails,
+          remainingCount > 0 ? `${remainingCount} additional skipped vehicle${remainingCount === 1 ? "" : "s"}.` : "",
+          notificationWarning
+        ].filter(Boolean).join(" ")
+      });
+    }
+
+    return data;
+  }
+
   async function updateFlags(vehicleId, changes) {
     setError("");
     const data = await request(`/vehicles/${vehicleId}/flags`, {
@@ -564,6 +608,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     loadDashboard,
     openVehicle,
     updateStatus,
+    bulkUpdateStatus,
     updateFlags,
     saveManagerCorrections,
     updateVehicleDueDate,

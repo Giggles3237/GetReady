@@ -95,6 +95,7 @@ export default function App() {
     loadDashboard,
     openVehicle,
     updateStatus,
+    bulkUpdateStatus,
     updateFlags,
     saveManagerCorrections,
     updateVehicleDueDate,
@@ -265,6 +266,10 @@ export default function App() {
             hasManagerAccess={hasManagerAccess}
             pipelineColumns={pipelineColumns}
             grouped={grouped}
+            bulkUpdateStatus={(vehicleIds, status) => bulkUpdateStatus(vehicleIds, status).catch((err) => {
+              setError(err.message);
+              return null;
+            })}
           />
         ) : activeTab === "calendar" ? (
           <CalendarTab
