@@ -23,6 +23,7 @@ export default function DashboardTab({
   error,
   successMessage,
   overdueActionVehicles,
+  completedVehicles,
   actionSections,
   showSalespersonSubmissionSection,
   mySubmittedVehicles,
@@ -36,21 +37,35 @@ export default function DashboardTab({
   hasManagerAccess,
   pipelineColumns,
   grouped,
-  bulkUpdateStatus
+  bulkUpdateStatus,
+  bulkArchiveVehicles
 }) {
   const [selectedVehicleIds, setSelectedVehicleIds] = useState([]);
+  const [selectedArchiveVehicleIds, setSelectedArchiveVehicleIds] = useState([]);
   const [bulkStatus, setBulkStatus] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkArchiveBusy, setBulkArchiveBusy] = useState(false);
   const selectedVehicleIdSet = useMemo(() => new Set(selectedVehicleIds), [selectedVehicleIds]);
+  const selectedArchiveVehicleIdSet = useMemo(() => new Set(selectedArchiveVehicleIds), [selectedArchiveVehicleIds]);
   const visibleManagerVehicleIds = useMemo(
     () => pipelineColumns.flatMap((column) => (grouped[column] ?? []).map((vehicle) => vehicle.id)),
     [grouped, pipelineColumns]
   );
+  const visibleTopVehicleIds = useMemo(() => [...new Set([
+    ...overdueActionVehicles.map((vehicle) => vehicle.id),
+    ...actionSections.flatMap((section) => section.items.map((vehicle) => vehicle.id)),
+    ...completedVehicles.map((vehicle) => vehicle.id)
+  ])], [actionSections, completedVehicles, overdueActionVehicles]);
 
   useEffect(() => {
     const visibleIds = new Set(visibleManagerVehicleIds);
     setSelectedVehicleIds((current) => current.filter((vehicleId) => visibleIds.has(vehicleId)));
   }, [visibleManagerVehicleIds]);
+
+  useEffect(() => {
+    const visibleIds = new Set(visibleTopVehicleIds);
+    setSelectedArchiveVehicleIds((current) => current.filter((vehicleId) => visibleIds.has(vehicleId)));
+  }, [visibleTopVehicleIds]);
 
   function toggleVehicle(vehicleId) {
     setSelectedVehicleIds((current) => current.includes(vehicleId)
@@ -64,6 +79,22 @@ export default function DashboardTab({
     setSelectedVehicleIds((current) => {
       const next = new Set(current);
       columnIds.forEach((vehicleId) => allSelected ? next.delete(vehicleId) : next.add(vehicleId));
+      return [...next];
+    });
+  }
+
+  function toggleArchiveVehicle(vehicleId) {
+    setSelectedArchiveVehicleIds((current) => current.includes(vehicleId)
+      ? current.filter((id) => id !== vehicleId)
+      : [...current, vehicleId]);
+  }
+
+  function toggleArchiveVehicles(vehicles) {
+    const vehicleIds = vehicles.map((vehicle) => vehicle.id);
+    const allSelected = vehicleIds.length > 0 && vehicleIds.every((vehicleId) => selectedArchiveVehicleIdSet.has(vehicleId));
+    setSelectedArchiveVehicleIds((current) => {
+      const next = new Set(current);
+      vehicleIds.forEach((vehicleId) => allSelected ? next.delete(vehicleId) : next.add(vehicleId));
       return [...next];
     });
   }
@@ -89,6 +120,29 @@ export default function DashboardTab({
       }
     } finally {
       setBulkBusy(false);
+    }
+  }
+
+  async function applyBulkArchive() {
+    if (selectedArchiveVehicleIds.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Archive ${selectedArchiveVehicleIds.length} selected vehicle${selectedArchiveVehicleIds.length === 1 ? "" : "s"}? They will be removed from active displays, but their audit history will be preserved.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setBulkArchiveBusy(true);
+    try {
+      const result = await bulkArchiveVehicles(selectedArchiveVehicleIds);
+      if (result) {
+        setSelectedArchiveVehicleIds([]);
+      }
+    } finally {
+      setBulkArchiveBusy(false);
     }
   }
 
@@ -125,14 +179,60 @@ export default function DashboardTab({
           </label>
         </div>
 
+        {hasManagerAccess ? (
+          <div className="bulk-archive-toolbar" aria-label="Bulk vehicle archive controls">
+            <div className="bulk-status-summary">
+              <strong>{selectedArchiveVehicleIds.length} selected for archive</strong>
+              <span>Select vehicles in the upper lists. Completed units appear when “Show Completed Units” is on.</span>
+            </div>
+            <div className="bulk-status-actions">
+              <button
+                type="button"
+                className="secondary-btn"
+                disabled={bulkArchiveBusy || visibleTopVehicleIds.length === 0}
+                onClick={() => toggleArchiveVehicles(visibleTopVehicleIds.map((id) => ({ id })))}
+              >
+                {visibleTopVehicleIds.length > 0 && visibleTopVehicleIds.every((id) => selectedArchiveVehicleIdSet.has(id)) ? "Clear Visible" : "Select Visible"}
+              </button>
+              <button
+                type="button"
+                className="secondary-btn"
+                disabled={bulkArchiveBusy || selectedArchiveVehicleIds.length === 0}
+                onClick={() => setSelectedArchiveVehicleIds([])}
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                className="danger-btn"
+                disabled={bulkArchiveBusy || selectedArchiveVehicleIds.length === 0 || selectedArchiveVehicleIds.length > 50}
+                onClick={applyBulkArchive}
+              >
+                {bulkArchiveBusy ? "Archiving..." : "Archive Selected"}
+              </button>
+            </div>
+            <small>Maximum 50 vehicles per batch. Each vehicle is audited separately; failures are skipped and reported.</small>
+          </div>
+        ) : null}
+
         {error ? <div className="error-banner">{error}</div> : null}
         {successMessage ? <div className="success-banner">{successMessage}</div> : null}
         {overdueActionVehicles.length > 0 ? (
           <div className="action-section overdue-section">
             <div className="action-section-head">
-              <div>
+              <div className="action-section-title">
+                {hasManagerAccess ? (
+                  <input
+                    type="checkbox"
+                    checked={overdueActionVehicles.every((vehicle) => selectedArchiveVehicleIdSet.has(vehicle.id))}
+                    onChange={() => toggleArchiveVehicles(overdueActionVehicles)}
+                    aria-label="Select all overdue vehicles for archive"
+                  />
+                ) : null}
+                <div>
                 <p className="eyebrow">Urgent</p>
                 <h3>Overdue Units</h3>
+                </div>
               </div>
               <span className="pill overdue-pill">{overdueActionVehicles.length}</span>
             </div>
@@ -149,6 +249,9 @@ export default function DashboardTab({
                   getNextActionForRole={getNextActionForRole}
                   fmtDate={fmtDate}
                   getWorkflowBadges={getWorkflowBadges}
+                  selectable={hasManagerAccess}
+                  selected={selectedArchiveVehicleIdSet.has(vehicle.id)}
+                  onToggleSelected={() => toggleArchiveVehicle(vehicle.id)}
                   emphasized
                 />
               ))}
@@ -161,7 +264,17 @@ export default function DashboardTab({
             {actionSections.map((section) => (
               <div key={section.label} className="action-section">
                 <div className="action-section-head">
-                  <h3>{section.label}</h3>
+                  <div className="action-section-title">
+                    {hasManagerAccess ? (
+                      <input
+                        type="checkbox"
+                        checked={section.items.length > 0 && section.items.every((vehicle) => selectedArchiveVehicleIdSet.has(vehicle.id))}
+                        onChange={() => toggleArchiveVehicles(section.items)}
+                        aria-label={`Select all ${section.label} vehicles for archive`}
+                      />
+                    ) : null}
+                    <h3>{section.label}</h3>
+                  </div>
                   <span className="pill">{section.items.length}</span>
                 </div>
                 <div className="dashboard-list">
@@ -177,14 +290,58 @@ export default function DashboardTab({
                       getNextActionForRole={getNextActionForRole}
                       fmtDate={fmtDate}
                       getWorkflowBadges={getWorkflowBadges}
+                      selectable={hasManagerAccess}
+                      selected={selectedArchiveVehicleIdSet.has(vehicle.id)}
+                      onToggleSelected={() => toggleArchiveVehicle(vehicle.id)}
                     />
                   ))}
                 </div>
               </div>
             ))}
           </div>
-        ) : overdueActionVehicles.length === 0 && !showSalespersonSubmissionSection ? (
+        ) : overdueActionVehicles.length === 0 && completedVehicles.length === 0 && !showSalespersonSubmissionSection ? (
           <div className="empty-inline">No units are waiting on your role right now.</div>
+        ) : null}
+
+        {hasManagerAccess && showCompleted && completedVehicles.length > 0 ? (
+          <div className="action-sections completed-archive-section">
+            <div className="action-section">
+              <div className="action-section-head">
+                <div className="action-section-title">
+                  <input
+                    type="checkbox"
+                    checked={completedVehicles.every((vehicle) => selectedArchiveVehicleIdSet.has(vehicle.id))}
+                    onChange={() => toggleArchiveVehicles(completedVehicles)}
+                    aria-label="Select all completed vehicles for archive"
+                  />
+                  <div>
+                    <p className="eyebrow">Ready to clean up</p>
+                    <h3>Completed Units</h3>
+                  </div>
+                </div>
+                <span className="pill">{completedVehicles.length}</span>
+              </div>
+              <div className="dashboard-list">
+                {completedVehicles.map((vehicle) => (
+                  <DashboardListRow
+                    key={`completed-${vehicle.id}`}
+                    vehicle={vehicle}
+                    role={role}
+                    openVehicle={openVehicle}
+                    isOverdue={isOverdue}
+                    getVehicleTimeTone={getVehicleTimeTone}
+                    getVehicleTimeLabel={getVehicleTimeLabel}
+                    getNextActionForRole={getNextActionForRole}
+                    fmtDate={fmtDate}
+                    getWorkflowBadges={getWorkflowBadges}
+                    selectable
+                    selected={selectedArchiveVehicleIdSet.has(vehicle.id)}
+                    onToggleSelected={() => toggleArchiveVehicle(vehicle.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {showSalespersonSubmissionSection ? (
@@ -317,13 +474,27 @@ function DashboardListRow({
   getNextActionForRole,
   fmtDate,
   emphasized = false,
-  submittedView = false
+  submittedView = false,
+  selectable = false,
+  selected = false,
+  onToggleSelected
 }) {
   const overdue = isOverdue(vehicle.due_date) && vehicle.status !== "ready";
   const nextAction = getNextActionForRole(vehicle, role);
 
   return (
-    <div className={`dashboard-row ${overdue ? "overdue" : ""} ${submittedView ? "" : "actionable"} ${emphasized ? "emphasized" : ""}`}>
+    <div className={`dashboard-row ${overdue ? "overdue" : ""} ${submittedView ? "" : "actionable"} ${emphasized ? "emphasized" : ""} ${selectable ? "selectable" : ""} ${selected ? "selected" : ""}`}>
+      {selectable ? (
+        <label className="dashboard-row-select">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelected}
+            aria-label={`Select ${formatStockNumber(vehicle.stock_number)} for archive`}
+          />
+          <span className="sr-only">Select vehicle for archive</span>
+        </label>
+      ) : null}
       <button type="button" className="dashboard-row-button" onClick={() => openVehicle(vehicle.id)}>
         <div className="dashboard-row-line">
           <strong className="stock">{formatStockNumber(vehicle.stock_number)}</strong>

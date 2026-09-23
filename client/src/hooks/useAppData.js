@@ -315,6 +315,43 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     return data;
   }
 
+  async function bulkArchiveVehicles(vehicleIds) {
+    setError("");
+    setSuccessMessage("");
+
+    const data = await request("/vehicles/bulk-archive", {
+      method: "PATCH",
+      body: JSON.stringify({ vehicle_ids: vehicleIds })
+    });
+
+    setSelectedVehicle(null);
+    await loadDashboard();
+    if (canAccessAdmin) {
+      await loadAdminData();
+    }
+
+    const skippedDetails = data.skipped
+      .slice(0, 8)
+      .map((item) => `${formatStockNumber(item.stock_number || item.id)}: ${item.reason}`)
+      .join(" ");
+    const remainingCount = Math.max(data.skipped.length - 8, 0);
+    const notificationWarning = data.summary.notification_failures > 0
+      ? ` ${data.summary.notification_failures} notification${data.summary.notification_failures === 1 ? "" : "s"} failed after the vehicles were archived.`
+      : "";
+
+    setArchiveNotice({
+      title: data.skipped.length > 0 ? "Bulk Archive Review" : "Vehicles Archived",
+      message: [
+        `${data.summary.updated} vehicle${data.summary.updated === 1 ? " was" : "s were"} archived; ${data.summary.skipped} skipped. Audit history was preserved.`,
+        skippedDetails,
+        remainingCount > 0 ? `${remainingCount} additional skipped vehicle${remainingCount === 1 ? "" : "s"}.` : "",
+        notificationWarning
+      ].filter(Boolean).join(" ")
+    });
+
+    return data;
+  }
+
   async function updateFlags(vehicleId, changes) {
     setError("");
     const data = await request(`/vehicles/${vehicleId}/flags`, {
@@ -485,6 +522,10 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     () => nextUpVehicles.filter((vehicle) => !(vehicle.status !== "ready" && isOverdue(vehicle.due_date))),
     [nextUpVehicles]
   );
+  const completedVehicles = useMemo(
+    () => showCompleted ? prioritizedVehicles.filter((vehicle) => vehicle.status === "ready") : [],
+    [prioritizedVehicles, showCompleted]
+  );
   const mySubmittedVehicles = useMemo(() => prioritizedVehicles.filter((vehicle) => vehicle.submitted_by_user_id === authUser?.id), [prioritizedVehicles, authUser]);
   const calendarVehicles = useMemo(() => {
     const today = startOfDay(new Date()).getTime();
@@ -609,6 +650,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     openVehicle,
     updateStatus,
     bulkUpdateStatus,
+    bulkArchiveVehicles,
     updateFlags,
     saveManagerCorrections,
     updateVehicleDueDate,
@@ -623,6 +665,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     updateAdminUser,
     grouped,
     overdueActionVehicles,
+    completedVehicles,
     mySubmittedVehicles,
     calendarVehicles,
     agendaSections,

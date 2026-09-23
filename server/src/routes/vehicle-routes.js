@@ -2,6 +2,7 @@ import { asyncHandler } from "../async-handler.js";
 import { getVehicle, listActionDefinitions, listAuditEntries, listUsers, listVehicles } from "../db.js";
 import { STATUS, STATUS_META, canTransition, deriveAssignedRole, getPipelineColumn } from "../workflow.js";
 import { shouldShowOnDashboard } from "../services/dashboard-visibility.js";
+import { getBulkArchiveDecision, normalizeBulkArchiveRequest } from "../services/bulk-archive-service.js";
 import { getBulkStatusDecision, normalizeBulkStatusRequest } from "../services/bulk-status-service.js";
 import {
   decorateAuditEntry,
@@ -106,6 +107,18 @@ export function registerVehicleRoutes(app, {
   isStatusUndo,
   getProtectedUndoField
 }) {
+  function archiveVehicleRecord(vehicle, actorUserId) {
+    return updateVehicleWithAudit(
+      vehicle.id,
+      {
+        is_archived: true,
+        archived_at: new Date().toISOString()
+      },
+      actorUserId,
+      "vehicle_archived"
+    );
+  }
+
   app.get("/api/users", asyncHandler(async (_req, res) => {
     const users = (await listUsers()).map(sanitizeUser);
     res.json({ users });
@@ -235,6 +248,55 @@ export function registerVehicleRoutes(app, {
     res.json({ vehicle: decorateVehicle(vehicle, usersById, timeline, actionDefinitions, req.currentUser.id) });
   }));
 
+  app.patch("/api/vehicles/bulk-archive", requireManager, asyncHandler(async (req, res) => {
+    const { vehicleIds } = normalizeBulkArchiveRequest(req.body);
+    const updated = [];
+    const skipped = [];
+    let notificationsSent = 0;
+    let notificationFailures = 0;
+
+    for (const vehicleId of vehicleIds) {
+      const vehicleRow = await getVehicle(vehicleId);
+      if (!vehicleRow) {
+        skipped.push({ id: vehicleId, stock_number: null, reason: "Vehicle not found." });
+        continue;
+      }
+
+      const vehicle = normalizeVehicle(vehicleRow);
+      const decision = getBulkArchiveDecision(vehicle);
+      if (!decision.allowed) {
+        skipped.push({ id: vehicle.id, stock_number: vehicle.stock_number, reason: decision.message });
+        continue;
+      }
+
+      try {
+        const result = await archiveVehicleRecord(vehicle, req.currentUser.id);
+
+        notificationsSent += result.notification?.sent?.length ?? 0;
+        notificationFailures += result.notification?.failed?.length ?? 0;
+        updated.push({ id: vehicle.id, stock_number: vehicle.stock_number });
+      } catch (error) {
+        skipped.push({
+          id: vehicle.id,
+          stock_number: vehicle.stock_number,
+          reason: error.message || "Archive failed."
+        });
+      }
+    }
+
+    res.json({
+      updated,
+      skipped,
+      summary: {
+        requested: vehicleIds.length,
+        updated: updated.length,
+        skipped: skipped.length,
+        notifications_sent: notificationsSent,
+        notification_failures: notificationFailures
+      }
+    });
+  }));
+
   app.patch("/api/vehicles/:id/archive", requireManager, asyncHandler(async (req, res) => {
     const vehicleRow = await getVehicle(req.params.id);
 
@@ -247,15 +309,7 @@ export function registerVehicleRoutes(app, {
       return res.status(400).json({ message: "This vehicle has already been archived." });
     }
 
-    const result = await updateVehicleWithAudit(
-      vehicle.id,
-      {
-        is_archived: true,
-        archived_at: new Date().toISOString()
-      },
-      req.currentUser.id,
-      "vehicle_archived"
-    );
+    const result = await archiveVehicleRecord(vehicle, req.currentUser.id);
 
     res.json({ vehicle: result.vehicle, notification: result.notification });
   }));

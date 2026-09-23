@@ -96,6 +96,7 @@ export default function App() {
     openVehicle,
     updateStatus,
     bulkUpdateStatus,
+    bulkArchiveVehicles,
     updateFlags,
     saveManagerCorrections,
     updateVehicleDueDate,
@@ -110,6 +111,7 @@ export default function App() {
     updateAdminUser,
     grouped,
     overdueActionVehicles,
+    completedVehicles,
     mySubmittedVehicles,
     calendarVehicles,
     agendaSections,
@@ -253,6 +255,7 @@ export default function App() {
             error={error}
             successMessage={successMessage}
             overdueActionVehicles={overdueActionVehicles}
+            completedVehicles={completedVehicles}
             actionSections={actionSections}
             showSalespersonSubmissionSection={showSalespersonSubmissionSection}
             mySubmittedVehicles={mySubmittedVehicles}
@@ -267,6 +270,10 @@ export default function App() {
             pipelineColumns={pipelineColumns}
             grouped={grouped}
             bulkUpdateStatus={(vehicleIds, status) => bulkUpdateStatus(vehicleIds, status).catch((err) => {
+              setError(err.message);
+              return null;
+            })}
+            bulkArchiveVehicles={(vehicleIds) => bulkArchiveVehicles(vehicleIds).catch((err) => {
               setError(err.message);
               return null;
             })}
