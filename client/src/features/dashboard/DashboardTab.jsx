@@ -4,7 +4,6 @@ import { formatFieldLabel, formatStockNumber } from "../../utils/appHelpers";
 const bulkStatusOptions = [
   "submitted",
   "to_detail",
-  "detail_started",
   "detail_finished",
   "removed_from_detail",
   "service",

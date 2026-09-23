@@ -20,6 +20,13 @@ test("rejects an unknown target status", () => {
   );
 });
 
+test("requires detail started to be claimed vehicle by vehicle", () => {
+  assert.throws(
+    () => normalizeBulkStatusRequest({ vehicle_ids: ["a"], status: "detail_started" }),
+    /claimed by the detailer/i
+  );
+});
+
 test("rejects an oversized batch", () => {
   const vehicleIds = Array.from({ length: MAX_BULK_STATUS_VEHICLES + 1 }, (_, index) => `vehicle-${index}`);
   assert.throws(
