@@ -104,6 +104,7 @@ export function registerVehicleRoutes(app, {
   requireManager,
   createVehicleRecord,
   updateVehicleWithAudit,
+  addAuditEntry,
   isStatusUndo,
   getProtectedUndoField
 }) {
@@ -246,6 +247,32 @@ export function registerVehicleRoutes(app, {
     const timeline = auditEntries.map((entry) => decorateAuditEntry(entry, usersById, vehiclesById));
 
     res.json({ vehicle: decorateVehicle(vehicle, usersById, timeline, actionDefinitions, req.currentUser.id) });
+  }));
+
+  app.post("/api/vehicles/:id/comments", asyncHandler(async (req, res) => {
+    const vehicle = await getVehicle(req.params.id);
+    if (!vehicle) {
+      return res.status(404).json({ message: "Vehicle not found." });
+    }
+
+    const comment = String(req.body?.comment ?? "").trim();
+    if (!comment) {
+      return res.status(400).json({ message: "Enter a comment before posting." });
+    }
+    if (comment.length > 1000) {
+      return res.status(400).json({ message: "Comments must be 1,000 characters or fewer." });
+    }
+
+    await addAuditEntry(null, {
+      vehicleId: vehicle.id,
+      userId: req.currentUser.id,
+      actionType: "comment_added",
+      fieldChanged: "comment",
+      oldValue: null,
+      newValue: comment
+    });
+
+    res.status(201).json({ message: "Comment posted." });
   }));
 
   app.patch("/api/vehicles/bulk-archive", requireManager, asyncHandler(async (req, res) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatStockNumber, getAuditEntryDisplay } from "../../utils/appHelpers";
 
 const statusOptions = [
@@ -19,6 +19,17 @@ const progressOptions = [
   { value: "completed", label: "Completed" }
 ];
 
+const statusProgress = {
+  submitted: 12,
+  to_detail: 26,
+  detail_started: 40,
+  detail_finished: 54,
+  removed_from_detail: 66,
+  service: 76,
+  qc: 88,
+  ready: 100
+};
+
 export default function VehicleDetailModal({
   selectedVehicle,
   onClose,
@@ -29,6 +40,7 @@ export default function VehicleDetailModal({
   dueDateEdit,
   setDueDateEdit,
   updateVehicleDueDate,
+  addVehicleComment,
   toDateTimeLocalValue,
   getServiceDisplayLabel,
   getBodyworkDisplayLabel,
@@ -46,15 +58,19 @@ export default function VehicleDetailModal({
 }) {
   const [corrections, setCorrections] = useState(null);
   const [showCorrectionPanel, setShowCorrectionPanel] = useState(false);
+  const [comment, setComment] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
 
   useEffect(() => {
     if (!selectedVehicle) {
       setCorrections(null);
       setShowCorrectionPanel(false);
+      setComment("");
       return;
     }
 
     setShowCorrectionPanel(false);
+    setComment("");
     setCorrections({
       status: selectedVehicle.status,
       needs_service: Boolean(selectedVehicle.needs_service),
@@ -70,6 +86,15 @@ export default function VehicleDetailModal({
     });
   }, [selectedVehicle]);
 
+  const comments = useMemo(
+    () => selectedVehicle?.timeline?.filter((entry) => entry.field_changed === "comment") ?? [],
+    [selectedVehicle]
+  );
+  const activity = useMemo(
+    () => selectedVehicle?.timeline?.filter((entry) => entry.field_changed !== "comment") ?? [],
+    [selectedVehicle]
+  );
+
   if (!selectedVehicle) {
     return null;
   }
@@ -78,35 +103,19 @@ export default function VehicleDetailModal({
     setCorrections((current) => {
       const next = { ...current, [field]: value };
 
-      if (field === "needs_service" && !value) {
-        next.service_status = "not_needed";
-      } else if (field === "needs_service" && value && next.service_status === "not_needed") {
-        next.service_status = "pending";
-      }
-
-      if (field === "needs_bodywork" && !value) {
-        next.bodywork_status = "not_needed";
-      } else if (field === "needs_bodywork" && value && next.bodywork_status === "not_needed") {
-        next.bodywork_status = "pending";
-      }
-
-      if (field === "qc_required" && !value) {
-        next.qc_completed = false;
-      }
-
+      if (field === "needs_service" && !value) next.service_status = "not_needed";
+      if (field === "needs_service" && value && next.service_status === "not_needed") next.service_status = "pending";
+      if (field === "needs_bodywork" && !value) next.bodywork_status = "not_needed";
+      if (field === "needs_bodywork" && value && next.bodywork_status === "not_needed") next.bodywork_status = "pending";
+      if (field === "qc_required" && !value) next.qc_completed = false;
       if (field === "recall_checked" && !value) {
         next.recall_open = false;
         next.recall_completed = false;
       }
-
       if (field === "recall_open") {
-        if (value) {
-          next.recall_checked = true;
-        } else {
-          next.recall_completed = false;
-        }
+        if (value) next.recall_checked = true;
+        else next.recall_completed = false;
       }
-
       if (field === "recall_completed" && value) {
         next.recall_checked = true;
         next.recall_open = true;
@@ -116,270 +125,178 @@ export default function VehicleDetailModal({
     });
   }
 
-  return (
-    <div className="detail-overlay">
-      <section className="detail-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Vehicle Detail</p>
-            <h2>{formatStockNumber(selectedVehicle.stock_number)} | {selectedVehicle.year} {selectedVehicle.make} {selectedVehicle.model}</h2>
-          </div>
-          <button type="button" className="secondary-btn" onClick={onClose}>Close</button>
-        </div>
+  async function submitComment(event) {
+    event.preventDefault();
+    const value = comment.trim();
+    if (!value || commentBusy) return;
 
-        <div className="detail-card">
+    setCommentBusy(true);
+    try {
+      await addVehicleComment(selectedVehicle.id, value);
+      setComment("");
+    } finally {
+      setCommentBusy(false);
+    }
+  }
+
+  function runAction(event) {
+    const actionKey = event.target.value;
+    if (!actionKey) return;
+    performAction(selectedVehicle.id, actionKey, updateStatus, updateFlags);
+    event.target.value = "";
+  }
+
+  const vehicleTitle = `${selectedVehicle.year} ${selectedVehicle.make} ${selectedVehicle.model}`;
+  const workflowPercent = statusProgress[selectedVehicle.status] ?? 8;
+
+  return (
+    <div className="detail-overlay" onClick={onClose}>
+      <section className="detail-modal vehicle-detail-screen" onClick={(event) => event.stopPropagation()}>
+        <header className="vehicle-detail-header">
+          <div>
+            <p className="eyebrow">Vehicle Detail / Get Ready</p>
+            <h2>{formatStockNumber(selectedVehicle.stock_number)}</h2>
+            <p className="vehicle-detail-title">{vehicleTitle} · {selectedVehicle.color}</p>
+          </div>
+          <div className="vehicle-detail-header-actions">
+            {hasManagerAccess ? (
+              <button type="button" className="secondary-btn" onClick={() => setShowCorrectionPanel((current) => !current)}>
+                {showCorrectionPanel ? "Done" : "Edit"}
+              </button>
+            ) : null}
+            <button type="button" className="detail-close-btn" onClick={onClose} aria-label="Close vehicle detail">×</button>
+          </div>
+        </header>
+
+        <div className="vehicle-detail-body">
           {selectedVehicle.is_archived ? (
             <div className="completion-banner">
               <strong>Archived Vehicle</strong>
-              <span>This unit is hidden from active displays but still preserved in the audit history.</span>
+              <span>Hidden from active displays with history preserved.</span>
             </div>
           ) : null}
           {selectedVehicle.status === "ready" ? (
             <div className="completion-banner">
-              <strong>Front Line Ready</strong>
-              <span>
-                {completionEntry
-                  ? `Completed by ${completionEntry.user?.name ?? "Unknown User"} on ${fmtDate(completionEntry.created_at)}`
-                  : "This unit has been marked complete."}
-              </span>
+              <strong>Vehicle Delivered</strong>
+              <span>{completionEntry ? `Completed by ${completionEntry.user?.name ?? "Unknown User"} on ${fmtDate(completionEntry.created_at)}` : "This unit is complete."}</span>
             </div>
           ) : null}
-          <p><strong>Status:</strong> {formatFieldLabel(selectedVehicle.status)}</p>
-          <div className="due-edit-row">
+
+          <div className="vehicle-people-grid">
             <div>
-              <strong>Due:</strong>
-              <span>{fmtDate(selectedVehicle.due_date)}</span>
+              <span>Salesperson</span>
+              <strong>{selectedVehicle.submitted_by?.name ?? "Unassigned"}</strong>
             </div>
-            {canEditDueDate && !selectedVehicle.is_archived ? (
-              <div className="due-edit-controls">
-                <input type="datetime-local" value={dueDateEdit} onChange={(event) => setDueDateEdit(event.target.value)} />
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={() => updateVehicleDueDate(selectedVehicle.id)}
-                  disabled={!dueDateEdit || dueDateEdit === toDateTimeLocalValue(selectedVehicle.due_date)}
-                >
-                  Save Due Date
-                </button>
-              </div>
-            ) : null}
+            <div>
+              <span>Assigned To</span>
+              <strong>{selectedVehicle.assigned_user?.name ?? formatFieldLabel(selectedVehicle.assigned_role)}</strong>
+            </div>
           </div>
-          <p><strong>Notes:</strong> {selectedVehicle.notes || "None"}</p>
-          {selectedVehicle.needs_service ? <p><strong>{getServiceDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.service_notes || "No service notes"}</p> : null}
-          {selectedVehicle.needs_bodywork ? <p><strong>{getBodyworkDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.bodywork_notes || "No body work notes"}</p> : null}
-          {completionIndicators.length > 0 ? (
-            <div className="indicator-grid">
-              {completionIndicators.map((indicator) => (
-                <span key={indicator.label} className="indicator-chip complete">
-                  {indicator.label}
-                </span>
-              ))}
-            </div>
-          ) : null}
-          {hasManagerAccess ? (
-            <div className="detail-actions-row">
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={() => setShowCorrectionPanel((current) => !current)}
-              >
-                {showCorrectionPanel ? "Hide Adjustments" : "Edit Workflow"}
-              </button>
-              {selectedVehicle.is_archived && canAccessAdmin ? (
-                <button type="button" className="primary-btn" onClick={() => unarchiveVehicle(selectedVehicle.id)}>
-                  Unarchive Vehicle
-                </button>
-              ) : (
-                <button type="button" className="danger-btn" onClick={() => archiveVehicle(selectedVehicle.id)}>
-                  Archive Vehicle
-                </button>
-              )}
-            </div>
-          ) : null}
-        </div>
 
-        <div className="detail-card">
-          <h3>{selectedVehicle.status === "ready" ? "Completion Summary" : "Available Actions"}</h3>
-          {selectedVehicle.status === "ready" ? (
-            <div className="completion-summary">
-              <p><strong>Completed By:</strong> {completionEntry?.user?.name ?? "Unknown User"}</p>
-              <p><strong>Completed At:</strong> {completionEntry ? fmtDate(completionEntry.created_at) : "Unknown"}</p>
-            </div>
-          ) : (
-            <div className="action-grid">
-              {availableActions.length > 0 ? availableActions.map((action) => (
-                <button
-                  type="button"
-                  key={action.key}
-                  className="next-step-btn"
-                  onClick={() => performAction(selectedVehicle.id, action.key, updateStatus, updateFlags)}
-                >
-                  {action.label}
-                </button>
-              )) : <p className="step-helper">No actions are available right now.</p>}
-            </div>
-          )}
-        </div>
-
-        {hasManagerAccess && corrections && showCorrectionPanel ? (
-          <div className="detail-card">
-            <div className="section-heading compact">
+          <section className="workflow-position-panel">
+            <div className="workflow-position-row">
               <div>
-                <h3>Workflow Editor</h3>
-                <p className="step-helper">
-                  Adjust the live workflow fields directly if someone tapped the wrong step.
-                </p>
+                <span>Workflow Position</span>
+                <strong>{formatFieldLabel(selectedVehicle.status)}</strong>
               </div>
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={() => saveManagerCorrections(selectedVehicle.id, corrections)}
-              >
-                Save Changes
-              </button>
+              {availableActions.length > 0 ? (
+                <select className="workflow-action-select" defaultValue="" onChange={runAction} aria-label="Choose next workflow action">
+                  <option value="" disabled>Choose next action</option>
+                  {availableActions.map((action) => <option key={action.key} value={action.key}>{action.label}</option>)}
+                </select>
+              ) : <span className="workflow-complete-label">Workflow complete</span>}
             </div>
-
-            <div className="manager-correction-grid">
-              <label>
-                Current Status
-                <select value={corrections.status} onChange={(event) => setCorrection("status", event.target.value)}>
-                  {statusOptions.map((status) => (
-                    <option key={status} value={status}>{formatFieldLabel(status)}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={corrections.fueled}
-                  onChange={(event) => setCorrection("fueled", event.target.checked)}
-                />
-                Fueled
-              </label>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={corrections.qc_required}
-                  onChange={(event) => setCorrection("qc_required", event.target.checked)}
-                />
-                QC Required
-              </label>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={corrections.qc_completed}
-                  disabled={!corrections.qc_required}
-                  onChange={(event) => setCorrection("qc_completed", event.target.checked)}
-                />
-                QC Completed
-              </label>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={corrections.needs_service}
-                  onChange={(event) => setCorrection("needs_service", event.target.checked)}
-                />
-                Needs Service
-              </label>
-
-              <label>
-                Service Status
-                <select
-                  value={corrections.service_status}
-                  disabled={!corrections.needs_service}
-                  onChange={(event) => setCorrection("service_status", event.target.value)}
-                >
-                  {progressOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={corrections.needs_bodywork}
-                  onChange={(event) => setCorrection("needs_bodywork", event.target.checked)}
-                />
-                Needs Body Work
-              </label>
-
-              <label>
-                Body Work Status
-                <select
-                  value={corrections.bodywork_status}
-                  disabled={!corrections.needs_bodywork}
-                  onChange={(event) => setCorrection("bodywork_status", event.target.value)}
-                >
-                  {progressOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={corrections.recall_checked}
-                  onChange={(event) => setCorrection("recall_checked", event.target.checked)}
-                />
-                Recalls Checked
-              </label>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={corrections.recall_open}
-                  onChange={(event) => setCorrection("recall_open", event.target.checked)}
-                />
-                Recall Open
-              </label>
-
-              <label className="toggle-line">
-                <input
-                  type="checkbox"
-                  checked={corrections.recall_completed}
-                  onChange={(event) => setCorrection("recall_completed", event.target.checked)}
-                />
-                Recall Completed
-              </label>
+            <div className="workflow-progress" aria-label={`${workflowPercent}% complete`}>
+              <span style={{ width: `${workflowPercent}%` }} />
             </div>
-          </div>
-        ) : null}
+          </section>
 
-        <div className="detail-card">
-          <h3>Completed Steps</h3>
-          {completedSteps.length > 0 ? (
-            <div className="timeline">
-              {completedSteps.map((step) => (
-                <div key={step.key} className="timeline-item">
-                  <strong>{step.label}</strong>
-                  <span>{step.entry.user?.name ?? "Unknown User"} | {fmtDate(step.entry.created_at)}</span>
+          {!selectedVehicle.fueled ? (
+            <section className="fuel-check-panel">
+              <div>
+                <strong>Fuel check</strong>
+                <span>This unit still needs gas.</span>
+              </div>
+              <button type="button" className="secondary-btn" onClick={() => updateFlags(selectedVehicle.id, { fueled: true })}>Set to Yes</button>
+            </section>
+          ) : (
+            <section className="fuel-check-panel complete">
+              <div><strong>Fuel check</strong><span>Fuel confirmed.</span></div>
+              <span className="indicator-chip complete">Complete</span>
+            </section>
+          )}
+
+          <section className="shared-notes-section">
+            <div className="shared-notes-heading">
+              <div><h3>Shared comments</h3><p>Visible to every teammate working on this unit.</p></div>
+              <span className="comment-count">{comments.length} {comments.length === 1 ? "comment" : "comments"}</span>
+            </div>
+            <div className="comment-list">
+              {comments.length > 0 ? comments.map((entry) => (
+                <article key={entry.id} className="comment-item">
+                  <div><strong>{entry.user?.name ?? "Unknown User"}</strong><span>{fmtDate(entry.created_at)}</span></div>
+                  <p>{entry.new_value}</p>
+                </article>
+              )) : <div className="comments-empty">No comments yet. Add the first handoff detail.</div>}
+            </div>
+            <form className="comment-composer" onSubmit={submitComment}>
+              <input value={comment} maxLength={1000} onChange={(event) => setComment(event.target.value)} placeholder="Add a handoff comment..." aria-label="New vehicle comment" />
+              <button type="submit" disabled={!comment.trim() || commentBusy} aria-label="Post comment">{commentBusy ? "…" : "→"}</button>
+            </form>
+          </section>
+
+          {selectedVehicle.notes || selectedVehicle.needs_service || selectedVehicle.needs_bodywork ? (
+            <section className="vehicle-existing-notes">
+              <h3>Vehicle notes</h3>
+              {selectedVehicle.notes ? <p>{selectedVehicle.notes}</p> : null}
+              {selectedVehicle.needs_service ? <p><strong>{getServiceDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.service_notes || "No service notes"}</p> : null}
+              {selectedVehicle.needs_bodywork ? <p><strong>{getBodyworkDisplayLabel(selectedVehicle)}:</strong> {selectedVehicle.bodywork_notes || "No body work notes"}</p> : null}
+            </section>
+          ) : null}
+
+          {showCorrectionPanel && corrections ? (
+            <section className="workflow-editor-panel">
+              <div className="section-heading compact">
+                <div><h3>Workflow Editor</h3><p className="step-helper">Correct workflow fields and due date.</p></div>
+                <button type="button" className="primary-btn" onClick={() => saveManagerCorrections(selectedVehicle.id, corrections)}>Save Changes</button>
+              </div>
+              {canEditDueDate ? (
+                <div className="due-edit-controls">
+                  <input type="datetime-local" value={dueDateEdit} onChange={(event) => setDueDateEdit(event.target.value)} />
+                  <button type="button" className="secondary-btn" onClick={() => updateVehicleDueDate(selectedVehicle.id)} disabled={!dueDateEdit || dueDateEdit === toDateTimeLocalValue(selectedVehicle.due_date)}>Save Due Date</button>
                 </div>
-              ))}
-            </div>
-          ) : <p className="step-helper">No completed steps have been logged yet.</p>}
-        </div>
+              ) : null}
+              <div className="manager-correction-grid">
+                <label>Current Status<select value={corrections.status} onChange={(event) => setCorrection("status", event.target.value)}>{statusOptions.map((status) => <option key={status} value={status}>{formatFieldLabel(status)}</option>)}</select></label>
+                <label className="toggle-line"><input type="checkbox" checked={corrections.fueled} onChange={(event) => setCorrection("fueled", event.target.checked)} />Fueled</label>
+                <label className="toggle-line"><input type="checkbox" checked={corrections.qc_required} onChange={(event) => setCorrection("qc_required", event.target.checked)} />QC Required</label>
+                <label className="toggle-line"><input type="checkbox" checked={corrections.qc_completed} disabled={!corrections.qc_required} onChange={(event) => setCorrection("qc_completed", event.target.checked)} />QC Completed</label>
+                <label className="toggle-line"><input type="checkbox" checked={corrections.needs_service} onChange={(event) => setCorrection("needs_service", event.target.checked)} />Needs Service</label>
+                <label>Service Status<select value={corrections.service_status} disabled={!corrections.needs_service} onChange={(event) => setCorrection("service_status", event.target.value)}>{progressOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <label className="toggle-line"><input type="checkbox" checked={corrections.needs_bodywork} onChange={(event) => setCorrection("needs_bodywork", event.target.checked)} />Needs Body Work</label>
+                <label>Body Work Status<select value={corrections.bodywork_status} disabled={!corrections.needs_bodywork} onChange={(event) => setCorrection("bodywork_status", event.target.value)}>{progressOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <label className="toggle-line"><input type="checkbox" checked={corrections.recall_checked} onChange={(event) => setCorrection("recall_checked", event.target.checked)} />Recalls Checked</label>
+                <label className="toggle-line"><input type="checkbox" checked={corrections.recall_open} onChange={(event) => setCorrection("recall_open", event.target.checked)} />Recall Open</label>
+                <label className="toggle-line"><input type="checkbox" checked={corrections.recall_completed} onChange={(event) => setCorrection("recall_completed", event.target.checked)} />Recall Completed</label>
+              </div>
+              <div className="detail-actions-row">
+                {selectedVehicle.is_archived && canAccessAdmin ? <button type="button" className="primary-btn" onClick={() => unarchiveVehicle(selectedVehicle.id)}>Unarchive Vehicle</button> : <button type="button" className="danger-btn" onClick={() => archiveVehicle(selectedVehicle.id)}>Archive Vehicle</button>}
+              </div>
+            </section>
+          ) : null}
 
-        <div className="detail-card">
-          <h3>Activity Log</h3>
-          <div className="timeline">
-            {selectedVehicle.timeline.map((entry) => {
+          <details className="vehicle-history">
+            <summary>History and completed steps</summary>
+            {completionIndicators.length > 0 ? <div className="indicator-grid">{completionIndicators.map((indicator) => <span key={indicator.label} className="indicator-chip complete">{indicator.label}</span>)}</div> : null}
+            {completedSteps.map((step) => <div key={step.key} className="timeline-item"><strong>{step.label}</strong><span>{step.entry.user?.name ?? "Unknown User"} · {fmtDate(step.entry.created_at)}</span></div>)}
+            {activity.map((entry) => {
               const display = getAuditEntryDisplay(entry);
-              return (
-                <div key={entry.id} className="timeline-item">
-                  <strong>{display.title}</strong>
-                  <span>{fmtDate(entry.created_at)} | {entry.user?.name ?? "Unknown User"}</span>
-                  {display.detail ? <p>{display.detail}</p> : null}
-                </div>
-              );
+              return <div key={entry.id} className="timeline-item"><strong>{display.title}</strong><span>{fmtDate(entry.created_at)} · {entry.user?.name ?? "Unknown User"}</span>{display.detail ? <p>{display.detail}</p> : null}</div>;
             })}
-          </div>
+          </details>
         </div>
+
+        <footer className="vehicle-detail-footer">{selectedVehicle.status === "ready" ? "Vehicle Delivered" : `Due ${fmtDate(selectedVehicle.due_date)}`}</footer>
       </section>
     </div>
   );

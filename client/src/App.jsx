@@ -100,6 +100,7 @@ export default function App() {
     updateFlags,
     saveManagerCorrections,
     updateVehicleDueDate,
+    addVehicleComment,
     archiveVehicle,
     unarchiveVehicle,
     createVehicle,
@@ -267,6 +268,18 @@ export default function App() {
             fmtDate={fmtDate}
             getWorkflowBadges={getWorkflowBadges}
             hasManagerAccess={hasManagerAccess}
+            canEditDueDate={canEditDueDate}
+            performAction={performAction}
+            updateStatus={(vehicleId, status) => updateStatus(vehicleId, status).catch((err) => setError(err.message))}
+            updateFlags={(vehicleId, changes) => updateFlags(vehicleId, changes).catch((err) => setError(err.message))}
+            addVehicleComment={(vehicleId, comment) => addVehicleComment(vehicleId, comment).catch((err) => {
+              setError(err.message);
+              throw err;
+            })}
+            updateVehicleDueDate={(vehicleId, dueDate) => updateVehicleDueDate(vehicleId, dueDate).catch((err) => {
+              setError(err.message);
+              throw err;
+            })}
             pipelineColumns={pipelineColumns}
             grouped={grouped}
             bulkUpdateStatus={(vehicleIds, status) => bulkUpdateStatus(vehicleIds, status).catch((err) => {
@@ -364,6 +377,10 @@ export default function App() {
         dueDateEdit={dueDateEdit}
         setDueDateEdit={setDueDateEdit}
         updateVehicleDueDate={(vehicleId) => updateVehicleDueDate(vehicleId).catch((err) => setError(err.message))}
+        addVehicleComment={(vehicleId, comment) => addVehicleComment(vehicleId, comment).catch((err) => {
+          setError(err.message);
+          throw err;
+        })}
         toDateTimeLocalValue={toDateTimeLocalValue}
         getServiceDisplayLabel={getServiceDisplayLabel}
         getBodyworkDisplayLabel={getBodyworkDisplayLabel}

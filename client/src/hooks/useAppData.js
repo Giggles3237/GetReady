@@ -372,13 +372,22 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     showNotificationNotice(data.notification);
   }
 
-  async function updateVehicleDueDate(vehicleId) {
+  async function updateVehicleDueDate(vehicleId, nextDueDate = dueDateEdit) {
     setError("");
     await request(`/vehicles/${vehicleId}/due-date`, {
       method: "PATCH",
-      body: JSON.stringify({ due_date: new Date(dueDateEdit).toISOString() })
+      body: JSON.stringify({ due_date: new Date(nextDueDate).toISOString() })
     });
     await refreshVehicleAndDashboard(vehicleId);
+  }
+
+  async function addVehicleComment(vehicleId, comment) {
+    setError("");
+    await request(`/vehicles/${vehicleId}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ comment })
+    });
+    await openVehicle(vehicleId);
   }
 
   async function archiveVehicle(vehicleId) {
@@ -654,6 +663,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     updateFlags,
     saveManagerCorrections,
     updateVehicleDueDate,
+    addVehicleComment,
     archiveVehicle,
     unarchiveVehicle,
     createVehicle,

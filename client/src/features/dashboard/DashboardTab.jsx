@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { formatFieldLabel, formatStockNumber } from "../../utils/appHelpers";
+import { formatFieldLabel, formatStockNumber, toDateTimeLocalValue } from "../../utils/appHelpers";
 
 const bulkStatusOptions = [
   "submitted",
@@ -35,6 +35,12 @@ export default function DashboardTab({
   fmtDate,
   getWorkflowBadges,
   hasManagerAccess,
+  canEditDueDate,
+  performAction,
+  updateStatus,
+  updateFlags,
+  addVehicleComment,
+  updateVehicleDueDate,
   pipelineColumns,
   grouped,
   bulkUpdateStatus,
@@ -249,6 +255,12 @@ export default function DashboardTab({
                   getNextActionForRole={getNextActionForRole}
                   fmtDate={fmtDate}
                   getWorkflowBadges={getWorkflowBadges}
+                  performAction={performAction}
+                  updateStatus={updateStatus}
+                  updateFlags={updateFlags}
+                  addVehicleComment={addVehicleComment}
+                  canEditDueDate={canEditDueDate}
+                  updateVehicleDueDate={updateVehicleDueDate}
                   selectable={hasManagerAccess}
                   selected={selectedArchiveVehicleIdSet.has(vehicle.id)}
                   onToggleSelected={() => toggleArchiveVehicle(vehicle.id)}
@@ -290,6 +302,12 @@ export default function DashboardTab({
                       getNextActionForRole={getNextActionForRole}
                       fmtDate={fmtDate}
                       getWorkflowBadges={getWorkflowBadges}
+                      performAction={performAction}
+                      updateStatus={updateStatus}
+                      updateFlags={updateFlags}
+                      addVehicleComment={addVehicleComment}
+                      canEditDueDate={canEditDueDate}
+                      updateVehicleDueDate={updateVehicleDueDate}
                       selectable={hasManagerAccess}
                       selected={selectedArchiveVehicleIdSet.has(vehicle.id)}
                       onToggleSelected={() => toggleArchiveVehicle(vehicle.id)}
@@ -334,6 +352,12 @@ export default function DashboardTab({
                     getNextActionForRole={getNextActionForRole}
                     fmtDate={fmtDate}
                     getWorkflowBadges={getWorkflowBadges}
+                    performAction={performAction}
+                    updateStatus={updateStatus}
+                    updateFlags={updateFlags}
+                    addVehicleComment={addVehicleComment}
+                    canEditDueDate={canEditDueDate}
+                    updateVehicleDueDate={updateVehicleDueDate}
                     selectable
                     selected={selectedArchiveVehicleIdSet.has(vehicle.id)}
                     onToggleSelected={() => toggleArchiveVehicle(vehicle.id)}
@@ -364,6 +388,12 @@ export default function DashboardTab({
                     getNextActionForRole={getNextActionForRole}
                     fmtDate={fmtDate}
                     getWorkflowBadges={getWorkflowBadges}
+                    performAction={performAction}
+                    updateStatus={updateStatus}
+                    updateFlags={updateFlags}
+                    addVehicleComment={addVehicleComment}
+                    canEditDueDate={canEditDueDate}
+                    updateVehicleDueDate={updateVehicleDueDate}
                     submittedView
                   />
                 ))}
@@ -473,6 +503,12 @@ function DashboardListRow({
   getVehicleTimeLabel,
   getNextActionForRole,
   fmtDate,
+  performAction,
+  updateStatus,
+  updateFlags,
+  addVehicleComment,
+  canEditDueDate,
+  updateVehicleDueDate,
   emphasized = false,
   submittedView = false,
   selectable = false,
@@ -481,6 +517,55 @@ function DashboardListRow({
 }) {
   const overdue = isOverdue(vehicle.due_date) && vehicle.status !== "ready";
   const nextAction = getNextActionForRole(vehicle, role);
+  const inlineActions = vehicle.actions?.filter((action) => action.role === role) ?? [];
+  const commentCount = vehicle.timeline?.filter((entry) => entry.field_changed === "comment").length ?? 0;
+  const comments = vehicle.timeline?.filter((entry) => entry.field_changed === "comment") ?? [];
+  const [showComments, setShowComments] = useState(false);
+  const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [showDueDate, setShowDueDate] = useState(false);
+  const [dueDateValue, setDueDateValue] = useState(toDateTimeLocalValue(vehicle.due_date));
+
+  useEffect(() => {
+    setDueDateValue(toDateTimeLocalValue(vehicle.due_date));
+  }, [vehicle.due_date]);
+
+  async function runInlineAction(event) {
+    const actionKey = event.target.value;
+    if (!actionKey) return;
+    setBusy(true);
+    try {
+      await performAction(vehicle.id, actionKey, updateStatus, updateFlags);
+    } finally {
+      setBusy(false);
+      event.target.value = "";
+    }
+  }
+
+  async function submitInlineComment(event) {
+    event.preventDefault();
+    const value = comment.trim();
+    if (!value || busy) return;
+    setBusy(true);
+    try {
+      await addVehicleComment(vehicle.id, value);
+      setComment("");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveInlineDueDate(event) {
+    event.preventDefault();
+    if (!dueDateValue || busy) return;
+    setBusy(true);
+    try {
+      await updateVehicleDueDate(vehicle.id, dueDateValue);
+      setShowDueDate(false);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className={`dashboard-row ${overdue ? "overdue" : ""} ${submittedView ? "" : "actionable"} ${emphasized ? "emphasized" : ""} ${selectable ? "selectable" : ""} ${selected ? "selected" : ""}`}>
@@ -495,31 +580,60 @@ function DashboardListRow({
           <span className="sr-only">Select vehicle for archive</span>
         </label>
       ) : null}
-      <button type="button" className="dashboard-row-button" onClick={() => openVehicle(vehicle.id)}>
-        <div className="dashboard-row-line">
-          <strong className="stock">{formatStockNumber(vehicle.stock_number)}</strong>
-          <div className="dashboard-row-copy">
-            <span className="dashboard-row-title">{vehicle.year} {vehicle.make} {vehicle.model}</span>
-            <span className="dashboard-row-subtitle">{formatCompactStatus(vehicle.status)}</span>
+      <div className="dashboard-row-button">
+        <div className="vehicle-card-topline">
+          <button type="button" className="vehicle-card-open" onClick={() => openVehicle(vehicle.id)}>
+            <strong className="stock">{formatStockNumber(vehicle.stock_number)}</strong>
+            <span className="vehicle-type-chip">Customer Delivery</span>
+          </button>
+          {inlineActions.length > 0 ? (
+            <select className="vehicle-inline-action" defaultValue="" disabled={busy} onChange={runInlineAction} aria-label={`Update workflow for ${formatStockNumber(vehicle.stock_number)}`}>
+              <option value="" disabled>{busy ? "Updating..." : nextAction?.label ?? "Next action"}</option>
+              {inlineActions.map((action) => <option key={action.key} value={action.key}>{action.label}</option>)}
+            </select>
+          ) : <span className="vehicle-next-action">{formatCompactStatus(vehicle.status)}</span>}
+        </div>
+
+        <button type="button" className="vehicle-card-main" onClick={() => openVehicle(vehicle.id)}>
+          <h4 className="vehicle-card-title">{vehicle.year} {vehicle.make} {vehicle.model} · {vehicle.color}</h4>
+        </button>
+        <span className="vehicle-card-status">Status: {formatCompactStatus(vehicle.status)}</span>
+
+        <div className="vehicle-card-people">
+          <div><span>Sales</span><strong>{vehicle.submitted_by?.name ?? "Unassigned"}</strong></div>
+          <div><span>Assigned</span><strong>{vehicle.assigned_user?.name ?? formatCompactStatus(vehicle.assigned_role)}</strong></div>
+        </div>
+
+        <div className="vehicle-card-footer">
+          <div>
+            {canEditDueDate ? <button type="button" className="vehicle-due-button" onClick={() => setShowDueDate((current) => !current)}>{fmtDate(vehicle.due_date)}</button> : <span>{fmtDate(vehicle.due_date)}</span>}
+            <strong className={`status-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</strong>
           </div>
-          {nextAction ? (
-          <p className={`dashboard-row-next ${overdue ? "danger" : ""}`}>
-            <span>Next:</span> {nextAction.label}
-          </p>
+          <button type="button" className={`vehicle-card-comments ${showComments ? "active" : ""}`} onClick={() => setShowComments((current) => !current)}>Comments {commentCount}</button>
+          <button type="button" className={`vehicle-card-fuel ${vehicle.fueled ? "complete" : ""}`} disabled={busy} onClick={() => updateFlags(vehicle.id, { fueled: !vehicle.fueled })}><i />Gas: {vehicle.fueled ? "Yes" : "No"}</button>
+        </div>
+
+        {showDueDate ? (
+          <form className="inline-due-editor" onSubmit={saveInlineDueDate}>
+            <input type="datetime-local" value={dueDateValue} onChange={(event) => setDueDateValue(event.target.value)} />
+            <button type="submit" disabled={busy || !dueDateValue}>Save</button>
+          </form>
         ) : null}
-          <div className="dashboard-row-meta">
-            <span className={`status-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</span>
+
+        {showComments ? (
+          <div className="inline-comments">
+            <div className="inline-comment-list">
+              {comments.length > 0 ? comments.map((entry) => (
+                <div key={entry.id}><strong>{entry.user?.name ?? "Unknown"}</strong><p>{entry.new_value}</p></div>
+              )) : <span>No comments yet.</span>}
+            </div>
+            <form onSubmit={submitInlineComment}>
+              <input value={comment} maxLength={1000} onChange={(event) => setComment(event.target.value)} placeholder="Add a comment..." aria-label={`Comment on ${formatStockNumber(vehicle.stock_number)}`} />
+              <button type="submit" disabled={busy || !comment.trim()} aria-label="Post comment">→</button>
+            </form>
           </div>
-        </div>
-
-        <div className="dashboard-row-info">
-          <span>Due {fmtDate(vehicle.due_date)}</span>
-          <span>{vehicle.color}</span>
-          <span>{vehicle.current_location}</span>
-        </div>
-
-        {role === "detailer" ? <div className={`time-left-chip ${getVehicleTimeTone(vehicle)}`}>{getVehicleTimeLabel(vehicle)}</div> : null}
-      </button>
+        ) : null}
+      </div>
     </div>
   );
 }

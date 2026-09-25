@@ -161,6 +161,7 @@ registerVehicleRoutes(app, {
   requireManager,
   createVehicleRecord: (options) => createVehicleRecord({ ...options, addAuditEntry }),
   updateVehicleWithAudit: (vehicleId, changes, userId, actionType) => updateVehicleWithAudit(vehicleId, changes, userId, actionType, addAuditEntry),
+  addAuditEntry,
   isStatusUndo,
   getProtectedUndoField
 });
