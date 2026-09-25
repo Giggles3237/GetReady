@@ -2015,6 +2015,119 @@ select {
   }
 }
 
+/* Pipeline board refresh */
+.manager-panel {
+  padding: 20px;
+}
+
+.kanban {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  min-width: 980px;
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.kanban-column {
+  min-height: 250px;
+  padding: 12px 10px;
+  border: 1px solid #d8d5cd;
+  border-radius: 8px;
+  background: #fbfaf7;
+}
+
+.kanban-header {
+  min-height: 38px;
+  margin-bottom: 10px;
+  padding-bottom: 9px;
+  border-bottom-color: #e4e0d7;
+}
+
+.kanban-select-column h3 {
+  color: #26374c;
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+.kanban-header > span {
+  min-width: 24px;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #e9e7e1;
+  color: #66758a;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-align: center;
+}
+
+.kanban-stack:empty::after {
+  display: block;
+  padding: 22px 6px;
+  color: #9aa3ae;
+  content: "No units";
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-align: center;
+}
+
+.kanban-card-row {
+  grid-template-columns: 20px minmax(0, 1fr);
+  margin-bottom: 8px;
+  border-radius: 7px;
+}
+
+.kanban-card-select {
+  border-right: 0;
+  border-radius: 7px 0 0 7px;
+  background: #f0f1f0;
+}
+
+.kanban-card-row .kanban-card {
+  display: grid;
+  gap: 4px;
+  min-height: 72px;
+  padding: 11px 10px;
+  border: 1px solid #e2dfd7;
+  border-radius: 0 7px 7px 0;
+  background: #fffefa;
+  color: #18263a;
+  text-align: left;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.kanban-card-row .kanban-card:hover {
+  border-color: #8bb9df;
+  box-shadow: 0 4px 10px rgba(35, 46, 62, 0.08);
+  transform: translateY(-1px);
+}
+
+.kanban-card strong {
+  color: #0869ba;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+}
+
+.kanban-card-model {
+  color: #17283f;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.kanban-card-meta {
+  overflow: hidden;
+  color: #7a8798;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .manager-panel {
+    padding: 16px;
+  }
+}
+
 /* Vehicle workflow refresh */
 .dashboard-list {
   gap: 12px;
