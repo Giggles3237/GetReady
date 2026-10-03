@@ -7,6 +7,7 @@ import AdminTab from "./features/admin/AdminTab";
 import CalendarTab from "./features/calendar/CalendarTab";
 import DashboardTab from "./features/dashboard/DashboardTab";
 import ReportsTab from "./features/reports/ReportsTab";
+import SpreadsheetTab from "./features/spreadsheet/SpreadsheetTab";
 import SubmissionModal from "./features/vehicles/SubmissionModal";
 import VehicleDetailModal from "./features/vehicles/VehicleDetailModal";
 import { useAppData } from "./hooks/useAppData";
@@ -44,6 +45,7 @@ export default function App() {
   const role = authUser?.role ?? "salesperson";
   const dashboardRole = role === "admin" ? "manager" : role;
   const canAccessReports = ["admin", "manager"].includes(role);
+  const canAccessSpreadsheet = ["admin", "manager"].includes(role);
   const canAccessAdmin = role === "admin";
 
   const {
@@ -81,6 +83,7 @@ export default function App() {
     auditFeed,
     archivedVehicles,
     reportsOverview,
+    spreadsheetVehicles,
     newUser,
     setNewUser,
     submission,
@@ -98,6 +101,7 @@ export default function App() {
     bulkUpdateStatus,
     updateFlags,
     saveManagerCorrections,
+    saveSpreadsheetVehicle,
     updateVehicleDueDate,
     addVehicleComment,
     archiveVehicle,
@@ -105,6 +109,7 @@ export default function App() {
     createVehicle,
     loadAdminData,
     loadReports,
+    loadSpreadsheet,
     updateAdminAction,
     updateNotificationRule,
     createAdminUser,
@@ -157,6 +162,15 @@ export default function App() {
               onClick={() => loadReports().then(() => setActiveTab("reports")).catch((err) => setError(err.message))}
             >
               Reports
+            </button>
+          ) : null}
+          {canAccessSpreadsheet ? (
+            <button
+              type="button"
+              className={`tab-btn ${activeTab === "spreadsheet" ? "active" : ""}`}
+              onClick={() => loadSpreadsheet().then(() => setActiveTab("spreadsheet")).catch((err) => setError(err.message))}
+            >
+              Spreadsheet
             </button>
           ) : null}
           {canAccessAdmin ? (
@@ -305,6 +319,19 @@ export default function App() {
             reportsOverview={reportsOverview}
             loadReports={() => loadReports().catch((err) => setError(err.message))}
           />
+        ) : activeTab === "spreadsheet" ? (
+          <SpreadsheetTab
+            vehicles={spreadsheetVehicles}
+            users={assignableUsers}
+            error={error}
+            successMessage={successMessage}
+            loadSpreadsheet={() => loadSpreadsheet().catch((err) => setError(err.message))}
+            saveSpreadsheetVehicle={(vehicleId, changes) => saveSpreadsheetVehicle(vehicleId, changes).catch((err) => {
+              setError(err.message);
+              throw err;
+            })}
+            openVehicle={(vehicleId) => openVehicle(vehicleId).catch((err) => setError(err.message))}
+          />
         ) : (
           <AdminTab
             loadAdminData={() => loadAdminData().catch((err) => setError(err.message))}
@@ -339,10 +366,12 @@ export default function App() {
       <MobileTabBar
         canAccessAdmin={canAccessAdmin}
         canAccessReports={canAccessReports}
+        canAccessSpreadsheet={canAccessSpreadsheet}
         activeTab={activeTab}
         onSelectDashboard={() => setActiveTab("dashboard")}
         onSelectCalendar={() => setActiveTab("calendar")}
         onSelectReports={() => loadReports().then(() => setActiveTab("reports")).catch((err) => setError(err.message))}
+        onSelectSpreadsheet={() => loadSpreadsheet().then(() => setActiveTab("spreadsheet")).catch((err) => setError(err.message))}
         onSelectAdmin={() => { setActiveTab("admin"); loadAdminData().catch((err) => setError(err.message)); }}
       />
 

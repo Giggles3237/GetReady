@@ -88,6 +88,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
   const [auditFeed, setAuditFeed] = useState([]);
   const [archivedVehicles, setArchivedVehicles] = useState([]);
   const [reportsOverview, setReportsOverview] = useState(null);
+  const [spreadsheetVehicles, setSpreadsheetVehicles] = useState([]);
   const [newUser, setNewUser] = useState({ name: "", email: "", mobile_phone: "", sms_enabled: false, role: "salesperson" });
   const [submission, setSubmission] = useState(createEmptySubmission(authUser?.id));
   const [error, setError] = useState("");
@@ -167,6 +168,22 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     setError("");
     const data = await request("/reports/overview");
     setReportsOverview(data.report);
+  }
+
+  async function loadSpreadsheet() {
+    if (!hasManagerAccess) {
+      return;
+    }
+
+    setError("");
+    const spreadsheetRole = role === "admin" ? "admin" : "manager";
+    const [userData, vehicleData] = await Promise.all([
+      request("/users"),
+      request(`/vehicles?role=${spreadsheetRole}&include_completed=true`)
+    ]);
+
+    setUsers(userData.users);
+    setSpreadsheetVehicles(vehicleData.vehicles);
   }
 
   useEffect(() => {
@@ -370,6 +387,25 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     });
     await refreshVehicleAndDashboard(vehicleId);
     showNotificationNotice(data.notification);
+  }
+
+  async function saveSpreadsheetVehicle(vehicleId, changes) {
+    setError("");
+    setSuccessMessage("");
+    const data = await request(`/vehicles/${vehicleId}/spreadsheet`, {
+      method: "PATCH",
+      body: JSON.stringify(changes)
+    });
+
+    await loadSpreadsheet();
+    await loadDashboard();
+    if (selectedVehicle?.id === vehicleId) {
+      await openVehicle(vehicleId);
+    }
+
+    showNotificationNotice(data.notification);
+    setSuccessMessage(`${formatStockNumber(data.vehicle.stock_number)} saved.`);
+    return data.vehicle;
   }
 
   async function updateVehicleDueDate(vehicleId, nextDueDate = dueDateEdit) {
@@ -601,6 +637,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     setNotificationBuckets([]);
     setAuditFeed([]);
     setReportsOverview(null);
+    setSpreadsheetVehicles([]);
     setSuccessMessage("");
     setArchiveNotice(null);
     setSearch("");
@@ -644,6 +681,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     auditFeed,
     archivedVehicles,
     reportsOverview,
+    spreadsheetVehicles,
     newUser,
     setNewUser,
     submission,
@@ -662,6 +700,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     bulkArchiveVehicles,
     updateFlags,
     saveManagerCorrections,
+    saveSpreadsheetVehicle,
     updateVehicleDueDate,
     addVehicleComment,
     archiveVehicle,
@@ -669,6 +708,7 @@ export function useAppData({ authUser, canAccessAdmin, dashboardRole, role }) {
     createVehicle,
     loadAdminData,
     loadReports,
+    loadSpreadsheet,
     updateAdminAction,
     updateNotificationRule,
     createAdminUser,

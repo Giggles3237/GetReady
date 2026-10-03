@@ -31,6 +31,79 @@ const managerCorrectionEnumFields = {
   bodywork_status: new Set(["not_needed", "pending", "in_progress", "completed"])
 };
 
+const spreadsheetTextFields = new Set([
+  "stock_number",
+  "make",
+  "model",
+  "color",
+  "notes",
+  "service_notes",
+  "bodywork_notes"
+]);
+
+const spreadsheetUserFields = new Set(["assigned_user_id", "submitted_by_user_id"]);
+
+function normalizeSpreadsheetChanges(payload, vehicle, users) {
+  const normalized = {};
+  const usersById = new Map(users.map((user) => [user.id, user]));
+
+  for (const [field, value] of Object.entries(payload ?? {})) {
+    if (spreadsheetTextFields.has(field)) {
+      const textValue = String(value ?? "").trim();
+      if (["stock_number", "make", "model"].includes(field) && !textValue) {
+        throw Object.assign(new Error(`${field.replaceAll("_", " ")} is required.`), { statusCode: 400 });
+      }
+      normalized[field] = textValue;
+      continue;
+    }
+
+    if (field === "year") {
+      const year = Number(value);
+      if (Number.isInteger(year) && year >= 1900 && year <= 2100) {
+        normalized.year = year;
+      } else {
+        throw Object.assign(new Error("Year must be a valid four-digit year."), { statusCode: 400 });
+      }
+      continue;
+    }
+
+    if (field === "due_date") {
+      const dueDate = new Date(value);
+      if (!value || Number.isNaN(dueDate.getTime())) {
+        throw Object.assign(new Error("A valid due date and time is required."), { statusCode: 400 });
+      }
+      normalized.due_date = dueDate.toISOString();
+      continue;
+    }
+
+    if (spreadsheetUserFields.has(field)) {
+      if (!value) {
+        normalized[field] = null;
+      } else if (usersById.has(value)) {
+        normalized[field] = value;
+      } else {
+        throw Object.assign(new Error("The selected user could not be found."), { statusCode: 400 });
+      }
+      continue;
+    }
+
+    if (managerCorrectionBooleanFields.has(field) && typeof value === "boolean") {
+      normalized[field] = value;
+      continue;
+    }
+
+    if (managerCorrectionEnumFields[field]?.has(value)) {
+      normalized[field] = value;
+    }
+  }
+
+  if (Object.keys(normalized).length === 0) {
+    throw Object.assign(new Error("No valid spreadsheet fields were provided."), { statusCode: 400 });
+  }
+
+  return applyManagerCorrectionRules(normalized, vehicle);
+}
+
 function normalizeManagerCorrections(payload, vehicle) {
   const normalized = {};
 
@@ -49,23 +122,32 @@ function normalizeManagerCorrections(payload, vehicle) {
     throw Object.assign(new Error("No valid correction fields were provided."), { statusCode: 400 });
   }
 
+  return applyManagerCorrectionRules(normalized, vehicle);
+}
+
+function applyManagerCorrectionRules(normalized, vehicle) {
+  const hasField = (field) => Object.prototype.hasOwnProperty.call(normalized, field);
+  const touchesService = ["needs_service", "service_status", "service_notes"].some(hasField);
+  const touchesBodywork = ["needs_bodywork", "bodywork_status", "bodywork_notes"].some(hasField);
+  const touchesRecall = ["recall_checked", "recall_open", "recall_completed"].some(hasField);
+  const touchesQc = ["qc_required", "qc_completed"].some(hasField);
   const needsService = normalized.needs_service ?? vehicle.needs_service;
   const needsBodywork = normalized.needs_bodywork ?? vehicle.needs_bodywork;
   const qcRequired = normalized.qc_required ?? vehicle.qc_required;
 
-  if (!needsService) {
+  if (touchesService && !needsService) {
     normalized.needs_service = false;
     normalized.service_status = "not_needed";
     normalized.service_notes = "";
-  } else if (!normalized.service_status && vehicle.service_status === "not_needed") {
+  } else if (touchesService && !normalized.service_status && vehicle.service_status === "not_needed") {
     normalized.service_status = "pending";
   }
 
-  if (!needsBodywork) {
+  if (touchesBodywork && !needsBodywork) {
     normalized.needs_bodywork = false;
     normalized.bodywork_status = "not_needed";
     normalized.bodywork_notes = "";
-  } else if (!normalized.bodywork_status && vehicle.bodywork_status === "not_needed") {
+  } else if (touchesBodywork && !normalized.bodywork_status && vehicle.bodywork_status === "not_needed") {
     normalized.bodywork_status = "pending";
   }
 
@@ -85,11 +167,11 @@ function normalizeManagerCorrections(payload, vehicle) {
     nextRecall.recall_completed = false;
   }
 
-  if (Object.keys(normalized).some((field) => field.startsWith("recall_"))) {
+  if (touchesRecall) {
     Object.assign(normalized, nextRecall);
   }
 
-  if (!qcRequired) {
+  if (touchesQc && !qcRequired) {
     normalized.qc_required = false;
     normalized.qc_completed = false;
   }
@@ -497,6 +579,27 @@ export function registerVehicleRoutes(app, {
       res.json({ vehicle: result.vehicle, notification: result.notification });
     } catch (error) {
       return res.status(error.statusCode || 400).json({ message: error.message || "Unable to save corrections." });
+    }
+  }));
+
+  app.patch("/api/vehicles/:id/spreadsheet", requireManager, asyncHandler(async (req, res) => {
+    const [vehicleRow, users] = await Promise.all([
+      getVehicle(req.params.id),
+      listUsers()
+    ]);
+
+    if (!vehicleRow) {
+      return res.status(404).json({ message: "Vehicle not found." });
+    }
+
+    const vehicle = normalizeVehicle(vehicleRow);
+
+    try {
+      const normalized = normalizeSpreadsheetChanges(req.body, vehicle, users);
+      const result = await updateVehicleWithAudit(vehicle.id, normalized, req.currentUser.id, "spreadsheet_update");
+      res.json({ vehicle: result.vehicle, notification: result.notification });
+    } catch (error) {
+      return res.status(error.statusCode || 400).json({ message: error.message || "Unable to save spreadsheet changes." });
     }
   }));
 

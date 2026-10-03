@@ -2882,3 +2882,226 @@ select {
     display: grid;
   }
 }
+
+/* Spreadsheet manager view */
+.spreadsheet-panel {
+  padding: 16px;
+}
+
+.spreadsheet-heading {
+  align-items: center;
+}
+
+.spreadsheet-actions {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.spreadsheet-actions input {
+  min-height: 38px;
+  border-radius: 6px;
+}
+
+.spreadsheet-summary {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0;
+  color: #66758a;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.spreadsheet-summary span {
+  padding: 6px 8px;
+  border: 1px solid #dedbd2;
+  border-radius: 6px;
+  background: #fffefa;
+}
+
+.spreadsheet-summary strong {
+  color: #17283f;
+}
+
+.spreadsheet-wrap {
+  max-height: calc(100dvh - 245px);
+  overflow: auto;
+  border: 1px solid #d8d5cd;
+  border-radius: 8px;
+  background: #fffefa;
+}
+
+.spreadsheet-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.spreadsheet-table th,
+.spreadsheet-table td {
+  min-width: 118px;
+  max-width: 220px;
+  padding: 6px;
+  border-right: 1px solid #e6e1d8;
+  border-bottom: 1px solid #e6e1d8;
+  vertical-align: middle;
+  background: #fffefa;
+}
+
+.spreadsheet-table th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #f0eee8;
+  color: #526276;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.spreadsheet-table tr.dirty td {
+  background: #fff8e8;
+}
+
+.spreadsheet-table .sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  min-width: 106px;
+  border-right: 1px solid #cbc7bd;
+}
+
+.spreadsheet-table th.sticky-col {
+  z-index: 7;
+}
+
+.stock-cell {
+  display: grid;
+  gap: 5px;
+}
+
+.stock-cell input {
+  color: #0869ba;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.stock-cell button {
+  width: 100%;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: #eef7ff;
+  color: #0869ba;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-weight: 800;
+}
+
+.spreadsheet-table input,
+.spreadsheet-table select,
+.spreadsheet-table textarea {
+  min-height: 34px;
+  width: 100%;
+  border-radius: 6px;
+  padding: 7px 8px;
+  background: #fbfaf7;
+  font-size: 12px;
+}
+
+.spreadsheet-table textarea {
+  min-width: 210px;
+  min-height: 54px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.spreadsheet-table .cell-year {
+  min-width: 76px;
+}
+
+.spreadsheet-table .cell-datetime {
+  min-width: 178px;
+}
+
+.spreadsheet-table .checkbox-cell {
+  min-width: 72px;
+  text-align: center;
+}
+
+.spreadsheet-table .checkbox-cell input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  accent-color: var(--accent);
+}
+
+.spreadsheet-table .row-actions {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  min-width: 142px;
+  background: #fffefa;
+}
+
+.spreadsheet-table tr.dirty .row-actions {
+  background: #fff8e8;
+}
+
+.row-actions button {
+  width: 100%;
+  min-height: 31px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.row-actions button + button {
+  margin-top: 5px;
+}
+
+.spreadsheet-table button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+@media (max-width: 760px) {
+  .mobile-tabbar-five {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+  }
+
+  .mobile-tabbar-five .tab-btn {
+    padding: 10px 6px;
+    font-size: 10px;
+    letter-spacing: 0.04em;
+  }
+
+  .spreadsheet-panel {
+    padding: 12px;
+  }
+
+  .spreadsheet-heading {
+    display: grid;
+  }
+
+  .spreadsheet-actions {
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+
+  .spreadsheet-actions input {
+    grid-column: 1 / -1;
+  }
+
+  .spreadsheet-wrap {
+    max-height: calc(100dvh - 250px);
+    border-radius: 0;
+  }
+}
