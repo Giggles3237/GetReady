@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { formatFieldLabel, formatStockNumber, toDateTimeLocalValue } from "../../utils/appHelpers";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { formatFieldLabel, formatStockNumber } from "../../utils/appHelpers";
+import {
+  buildSpreadsheetDraft,
+  getSpreadsheetChanges,
+  reconcileSpreadsheetDrafts
+} from "./spreadsheetDrafts";
 
 const statusOptions = [
   "submitted",
@@ -25,56 +30,6 @@ const booleanColumns = [
   { key: "qc_completed", label: "QC Done" }
 ];
 
-function buildDraft(vehicle) {
-  return {
-    stock_number: vehicle.stock_number ?? "",
-    year: vehicle.year ?? "",
-    make: vehicle.make ?? "",
-    model: vehicle.model ?? "",
-    color: vehicle.color ?? "",
-    due_date: toDateTimeLocalValue(vehicle.due_date),
-    status: vehicle.status ?? "submitted",
-    submitted_by_user_id: vehicle.submitted_by_user_id ?? "",
-    assigned_user_id: vehicle.assigned_user_id ?? "",
-    needs_service: Boolean(vehicle.needs_service),
-    needs_bodywork: Boolean(vehicle.needs_bodywork),
-    recall_checked: Boolean(vehicle.recall_checked),
-    recall_open: Boolean(vehicle.recall_open),
-    recall_completed: Boolean(vehicle.recall_completed),
-    fueled: Boolean(vehicle.fueled),
-    qc_required: Boolean(vehicle.qc_required),
-    qc_completed: Boolean(vehicle.qc_completed),
-    service_status: vehicle.service_status ?? "not_needed",
-    bodywork_status: vehicle.bodywork_status ?? "not_needed",
-    notes: vehicle.notes ?? "",
-    service_notes: vehicle.service_notes ?? "",
-    bodywork_notes: vehicle.bodywork_notes ?? ""
-  };
-}
-
-function getChangedFields(vehicle, draft) {
-  const original = buildDraft(vehicle);
-  const changes = {};
-
-  Object.entries(draft).forEach(([key, value]) => {
-    if (String(original[key] ?? "") === String(value ?? "")) {
-      return;
-    }
-
-    if (key === "year") {
-      changes[key] = Number(value);
-    } else if (key === "due_date") {
-      changes[key] = value ? new Date(value).toISOString() : "";
-    } else if (key.endsWith("_user_id")) {
-      changes[key] = value || null;
-    } else {
-      changes[key] = value;
-    }
-  });
-
-  return changes;
-}
-
 export default function SpreadsheetTab({
   vehicles,
   users,
@@ -87,9 +42,12 @@ export default function SpreadsheetTab({
   const [drafts, setDrafts] = useState({});
   const [query, setQuery] = useState("");
   const [savingIds, setSavingIds] = useState([]);
+  const editVersionRef = useRef(0);
+  const editVersionsRef = useRef({});
+  const savingIdsRef = useRef(new Set());
 
   useEffect(() => {
-    setDrafts(Object.fromEntries(vehicles.map((vehicle) => [vehicle.id, buildDraft(vehicle)])));
+    setDrafts((current) => reconcileSpreadsheetDrafts(vehicles, current, editVersionsRef.current));
   }, [vehicles]);
 
   const activeUsers = useMemo(() => users.filter((user) => user.is_active), [users]);
@@ -121,10 +79,25 @@ export default function SpreadsheetTab({
 
   const dirtyRows = useMemo(() => vehicles.filter((vehicle) => {
     const draft = drafts[vehicle.id];
-    return draft && Object.keys(getChangedFields(vehicle, draft)).length > 0;
+    return draft && Object.keys(getSpreadsheetChanges(vehicle, draft)).length > 0;
   }), [vehicles, drafts]);
 
   function updateDraft(vehicleId, field, value) {
+    const vehicle = vehicles.find((item) => item.id === vehicleId);
+    const serverValue = vehicle ? buildSpreadsheetDraft(vehicle)[field] : undefined;
+    const rowVersions = { ...(editVersionsRef.current[vehicleId] ?? {}) };
+
+    if (!savingIdsRef.current.has(vehicleId) && String(value ?? "") === String(serverValue ?? "")) {
+      delete rowVersions[field];
+    } else {
+      editVersionRef.current += 1;
+      rowVersions[field] = editVersionRef.current;
+    }
+    editVersionsRef.current = {
+      ...editVersionsRef.current,
+      [vehicleId]: rowVersions
+    };
+
     setDrafts((current) => ({
       ...current,
       [vehicleId]: {
@@ -135,31 +108,76 @@ export default function SpreadsheetTab({
   }
 
   function resetRow(vehicle) {
+    const nextEditVersions = { ...editVersionsRef.current };
+    delete nextEditVersions[vehicle.id];
+    editVersionsRef.current = nextEditVersions;
     setDrafts((current) => ({
       ...current,
-      [vehicle.id]: buildDraft(vehicle)
+      [vehicle.id]: buildSpreadsheetDraft(vehicle)
     }));
   }
 
-  async function saveRow(vehicle) {
-    const draft = drafts[vehicle.id];
-    const changes = getChangedFields(vehicle, draft);
+  function snapshotSave(vehicle) {
+    return {
+      vehicleId: vehicle.id,
+      changes: getSpreadsheetChanges(vehicle, drafts[vehicle.id]),
+      editVersions: { ...(editVersionsRef.current[vehicle.id] ?? {}) }
+    };
+  }
 
-    if (Object.keys(changes).length === 0 || savingIdSet.has(vehicle.id)) {
+  async function saveChanges({ vehicleId, changes, editVersions }) {
+    if (Object.keys(changes).length === 0 || savingIdsRef.current.has(vehicleId)) {
       return;
     }
 
-    setSavingIds((current) => [...current, vehicle.id]);
+    savingIdsRef.current.add(vehicleId);
+    setSavingIds((current) => [...current, vehicleId]);
     try {
-      await saveSpreadsheetVehicle(vehicle.id, changes);
+      const savedVehicle = await saveSpreadsheetVehicle(vehicleId, changes);
+      const savedDraft = savedVehicle ? buildSpreadsheetDraft(savedVehicle) : null;
+      const currentVersions = { ...(editVersionsRef.current[vehicleId] ?? {}) };
+      const acceptedFields = Object.keys(changes).filter((field) => currentVersions[field] === editVersions[field]);
+
+      acceptedFields.forEach((field) => {
+        delete currentVersions[field];
+      });
+      editVersionsRef.current = {
+        ...editVersionsRef.current,
+        [vehicleId]: currentVersions
+      };
+
+      if (savedDraft) {
+        setDrafts((current) => ({
+          ...current,
+          [vehicleId]: {
+            ...current[vehicleId],
+            ...Object.fromEntries(acceptedFields.map((field) => [field, savedDraft[field]]))
+          }
+        }));
+      }
     } finally {
-      setSavingIds((current) => current.filter((id) => id !== vehicle.id));
+      savingIdsRef.current.delete(vehicleId);
+      setSavingIds((current) => current.filter((id) => id !== vehicleId));
+    }
+  }
+
+  async function saveRow(vehicle) {
+    try {
+      await saveChanges(snapshotSave(vehicle));
+    } catch {
+      // The parent reports the request error; keep the draft available for retry.
     }
   }
 
   async function saveAll() {
-    for (const vehicle of dirtyRows) {
-      await saveRow(vehicle);
+    const pendingSaves = dirtyRows.map(snapshotSave);
+
+    for (const pendingSave of pendingSaves) {
+      try {
+        await saveChanges(pendingSave);
+      } catch {
+        // Continue saving the remaining snapshot; failed rows stay dirty for retry.
+      }
     }
   }
 
@@ -211,8 +229,8 @@ export default function SpreadsheetTab({
           </thead>
           <tbody>
             {filteredVehicles.map((vehicle) => {
-              const draft = drafts[vehicle.id] ?? buildDraft(vehicle);
-              const isDirty = Object.keys(getChangedFields(vehicle, draft)).length > 0;
+              const draft = drafts[vehicle.id] ?? buildSpreadsheetDraft(vehicle);
+              const isDirty = Object.keys(getSpreadsheetChanges(vehicle, draft)).length > 0;
               const isSaving = savingIdSet.has(vehicle.id);
 
               return (
