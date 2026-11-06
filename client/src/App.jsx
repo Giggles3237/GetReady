@@ -99,6 +99,7 @@ export default function App() {
     openVehicle,
     updateStatus,
     bulkUpdateStatus,
+    bulkArchiveVehicles,
     updateFlags,
     saveManagerCorrections,
     saveSpreadsheetVehicle,
@@ -296,6 +297,10 @@ export default function App() {
             pipelineColumns={pipelineColumns}
             grouped={grouped}
             bulkUpdateStatus={(vehicleIds, status) => bulkUpdateStatus(vehicleIds, status).catch((err) => {
+              setError(err.message);
+              return null;
+            })}
+            bulkArchiveVehicles={(vehicleIds) => bulkArchiveVehicles(vehicleIds).catch((err) => {
               setError(err.message);
               return null;
             })}

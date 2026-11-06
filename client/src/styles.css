@@ -1804,6 +1804,19 @@ select {
     display: none;
   }
 
+  .bulk-status-toolbar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .bulk-status-actions {
+    flex-wrap: wrap;
+  }
+
+  .bulk-status-actions button {
+    flex: 1 1 120px;
+  }
+
   .bulk-archive-toolbar {
     grid-template-columns: 1fr;
   }
