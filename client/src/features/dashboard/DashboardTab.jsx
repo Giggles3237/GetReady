@@ -43,7 +43,8 @@ export default function DashboardTab({
   updateVehicleDueDate,
   pipelineColumns,
   grouped,
-  bulkUpdateStatus
+  bulkUpdateStatus,
+  bulkArchiveVehicles
 }) {
   const [selectedVehicleIds, setSelectedVehicleIds] = useState([]);
   const [bulkStatus, setBulkStatus] = useState("");
@@ -53,6 +54,11 @@ export default function DashboardTab({
     () => pipelineColumns.flatMap((column) => (grouped[column] ?? []).map((vehicle) => vehicle.id)),
     [grouped, pipelineColumns]
   );
+  const visibleTopVehicleIds = useMemo(() => [...new Set([
+    ...overdueActionVehicles.map((vehicle) => vehicle.id),
+    ...actionSections.flatMap((section) => section.items.map((vehicle) => vehicle.id)),
+    ...completedVehicles.map((vehicle) => vehicle.id)
+  ])], [actionSections, completedVehicles, overdueActionVehicles]);
 
   useEffect(() => {
     const visibleIds = new Set(visibleManagerVehicleIds);
@@ -73,6 +79,10 @@ export default function DashboardTab({
       columnIds.forEach((vehicleId) => allSelected ? next.delete(vehicleId) : next.add(vehicleId));
       return [...next];
     });
+  }
+
+  function selectVisibleVehicles(vehicleIds) {
+    setSelectedVehicleIds(vehicleIds.slice(0, 50));
   }
 
   async function applyBulkStatus() {
@@ -97,6 +107,85 @@ export default function DashboardTab({
     } finally {
       setBulkBusy(false);
     }
+  }
+
+  async function applyBulkArchive() {
+    if (selectedVehicleIds.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Archive ${selectedVehicleIds.length} selected vehicle${selectedVehicleIds.length === 1 ? "" : "s"}? They will be removed from active displays, but their audit history will be preserved.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setBulkBusy(true);
+    try {
+      const result = await bulkArchiveVehicles(selectedVehicleIds);
+      if (result) {
+        setSelectedVehicleIds([]);
+        setBulkStatus("");
+      }
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  function renderBulkToolbar(selectableVehicleIds) {
+    return (
+      <div className="bulk-status-toolbar" aria-label="Bulk vehicle actions">
+        <div className="bulk-status-summary">
+          <strong>{selectedVehicleIds.length} selected</strong>
+          <span>Mark vehicles below, then update their status or archive them.</span>
+        </div>
+        <label className="bulk-status-field">
+          <span>New status</span>
+          <select value={bulkStatus} disabled={bulkBusy} onChange={(event) => setBulkStatus(event.target.value)}>
+            <option value="">Choose status...</option>
+            {bulkStatusOptions.map((status) => (
+              <option key={status} value={status}>{formatFieldLabel(status)}</option>
+            ))}
+          </select>
+        </label>
+        <div className="bulk-status-actions">
+          <button
+            type="button"
+            className="secondary-btn"
+            disabled={bulkBusy || selectableVehicleIds.length === 0}
+            onClick={() => selectVisibleVehicles(selectableVehicleIds)}
+          >
+            Select Visible
+          </button>
+          <button
+            type="button"
+            className="primary-btn"
+            disabled={bulkBusy || !bulkStatus || selectedVehicleIds.length === 0 || selectedVehicleIds.length > 50}
+            onClick={applyBulkStatus}
+          >
+            {bulkBusy ? "Working..." : "Apply Status"}
+          </button>
+          <button
+            type="button"
+            className="danger-btn"
+            disabled={bulkBusy || selectedVehicleIds.length === 0 || selectedVehicleIds.length > 50}
+            onClick={applyBulkArchive}
+          >
+            {bulkBusy ? "Working..." : "Archive"}
+          </button>
+          <button
+            type="button"
+            className="secondary-btn"
+            disabled={bulkBusy || selectedVehicleIds.length === 0}
+            onClick={() => setSelectedVehicleIds([])}
+          >
+            Clear
+          </button>
+        </div>
+        <small>Maximum 50 vehicles per batch. Workflow rules still apply; skipped cars and notification failures are reported.</small>
+      </div>
+    );
   }
 
   return (
@@ -132,6 +221,8 @@ export default function DashboardTab({
           </label>
         </div>
 
+        {hasManagerAccess ? renderBulkToolbar(visibleTopVehicleIds) : null}
+
         {error ? <div className="error-banner">{error}</div> : null}
         {successMessage ? <div className="success-banner">{successMessage}</div> : null}
         {overdueActionVehicles.length > 0 ? (
@@ -164,6 +255,9 @@ export default function DashboardTab({
                   addVehicleComment={addVehicleComment}
                   canEditDueDate={canEditDueDate}
                   updateVehicleDueDate={updateVehicleDueDate}
+                  selectable={hasManagerAccess}
+                  selected={selectedVehicleIdSet.has(vehicle.id)}
+                  onToggleSelected={() => toggleVehicle(vehicle.id)}
                   emphasized
                 />
               ))}
@@ -200,6 +294,9 @@ export default function DashboardTab({
                       addVehicleComment={addVehicleComment}
                       canEditDueDate={canEditDueDate}
                       updateVehicleDueDate={updateVehicleDueDate}
+                      selectable={hasManagerAccess}
+                      selected={selectedVehicleIdSet.has(vehicle.id)}
+                      onToggleSelected={() => toggleVehicle(vehicle.id)}
                     />
                   ))}
                 </div>
@@ -241,6 +338,9 @@ export default function DashboardTab({
                     addVehicleComment={addVehicleComment}
                     canEditDueDate={canEditDueDate}
                     updateVehicleDueDate={updateVehicleDueDate}
+                    selectable
+                    selected={selectedVehicleIdSet.has(vehicle.id)}
+                    onToggleSelected={() => toggleVehicle(vehicle.id)}
                   />
                 ))}
               </div>
@@ -291,40 +391,7 @@ export default function DashboardTab({
               <h2>Pipeline Board</h2>
             </div>
           </div>
-          <div className="bulk-status-toolbar" aria-label="Bulk vehicle status controls">
-            <div className="bulk-status-summary">
-              <strong>{selectedVehicleIds.length} selected</strong>
-              <span>Select vehicles below, then choose their new status.</span>
-            </div>
-            <label className="bulk-status-field">
-              <span>New status</span>
-              <select value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value)}>
-                <option value="">Choose status...</option>
-                {bulkStatusOptions.map((status) => (
-                  <option key={status} value={status}>{formatFieldLabel(status)}</option>
-                ))}
-              </select>
-            </label>
-            <div className="bulk-status-actions">
-              <button
-                type="button"
-                className="primary-btn"
-                disabled={bulkBusy || !bulkStatus || selectedVehicleIds.length === 0 || selectedVehicleIds.length > 50}
-                onClick={applyBulkStatus}
-              >
-                {bulkBusy ? "Updating..." : "Apply Status"}
-              </button>
-              <button
-                type="button"
-                className="secondary-btn"
-                disabled={bulkBusy || selectedVehicleIds.length === 0}
-                onClick={() => setSelectedVehicleIds([])}
-              >
-                Clear
-              </button>
-            </div>
-            <small>Maximum 50 vehicles per batch. Invalid transitions are skipped and reported.</small>
-          </div>
+          {renderBulkToolbar(visibleManagerVehicleIds)}
           <div className="kanban">
             {pipelineColumns.map((column) => {
               const columnVehicles = grouped[column] ?? [];
@@ -392,6 +459,9 @@ function DashboardListRow({
   updateVehicleDueDate,
   emphasized = false,
   submittedView = false,
+  selectable = false,
+  selected = false,
+  onToggleSelected,
 }) {
   const overdue = isOverdue(vehicle.due_date) && vehicle.status !== "ready";
   const nextAction = getNextActionForRole(vehicle, role);
@@ -446,7 +516,18 @@ function DashboardListRow({
   }
 
   return (
-    <div className={`dashboard-row ${overdue ? "overdue" : ""} ${submittedView ? "" : "actionable"} ${emphasized ? "emphasized" : ""}`}>
+    <div className={`dashboard-row ${overdue ? "overdue" : ""} ${submittedView ? "" : "actionable"} ${emphasized ? "emphasized" : ""} ${selectable ? "selectable" : ""} ${selected ? "selected" : ""}`}>
+      {selectable ? (
+        <label className="dashboard-row-select">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onToggleSelected}
+            aria-label={`Select ${formatStockNumber(vehicle.stock_number)} for batch actions`}
+          />
+          <span className="sr-only">Select vehicle for batch actions</span>
+        </label>
+      ) : null}
       <div className="dashboard-row-button">
         <div className="vehicle-card-topline">
           <button type="button" className="vehicle-card-open" onClick={() => openVehicle(vehicle.id)}>
